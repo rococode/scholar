@@ -1,0 +1,15 @@
+# various commands for running things
+
+python run_scholar.py data/20ng/20ng_all/processed/ -k 50 --test-prefix test --labels group
+
+python preprocess_data.py data/20ng/20ng_all/train.jsonlist data/20ng/20ng_all/processed/ --vocab-size 2000 --label group --test-prefix data/20ng/20ng_all/test.jsonlist
+
+python preprocess_data.py data/20ng/20ng_all/train.jsonlist data/20ng/20ng_all/processed/ --vocab-size 2000 --label group --test data/20ng/20ng_all/test.jsonlist
+
+python preprocess_data.py data/imdb/train.jsonlist data/imdb/processed/ --vocab-size 5000 --label sentiment --test data/imdb/test.jsonlist
+
+python run_scholar.py data/imdb/processed/ -k 50 --test-prefix test --labels sentiment
+
+# NPMI
+
+python compute_npmi.py output-imdb-baseline/topics.txt data/imdb/processed/train.npz data/imdb/processed/train.vocab.json
