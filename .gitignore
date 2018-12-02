@@ -107,3 +107,7 @@ output
 # IntelliJ
 *.iml
 .idea
+
+# rococo
+out/
+output-baseline/
