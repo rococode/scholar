@@ -67,6 +67,8 @@ def main(args):
                       help='GPU to use: default=%default')
     parser.add_option('--seed', type=int, default=None,
                       help='Random seed: default=%default')
+    parser.add_option('--frame-emb-dim', type=int, default=300,
+                      help='Dimension of learned frame embeddings: default=%default')
 
     options, args = parser.parse_args(args)
 
@@ -348,6 +350,7 @@ def make_network(options, vocab_size, label_type=None, n_labels=0, n_prior_covar
     # Assemble the network configuration parameters into a dictionary
     network_architecture = \
         dict(embedding_dim=options.emb_dim,
+             frame_embedding_dim=options.frame_emb_dim,
              n_topics=options.n_topics,
              vocab_size=vocab_size,
              label_type=label_type,

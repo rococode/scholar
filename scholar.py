@@ -248,6 +248,7 @@ class torchScholar(nn.Module):
         # load the configuration
         self.vocab_size = config['vocab_size']
         self.words_emb_dim = config['embedding_dim']
+        self.frame_emb_dim = config['frame_embedding_dim']
         self.n_topics = config['n_topics']
         self.n_labels = config['n_labels']
         self.n_prior_covars = config['n_prior_covars']
@@ -269,6 +270,7 @@ class torchScholar(nn.Module):
 
         # create the encoder
         self.embeddings_x_layer = nn.Linear(self.vocab_size, self.words_emb_dim, bias=False)
+        self.embeddings_frame_layer = nn.Linear(self.vocab_size, self.frame_emb_dim, bias=False)
         emb_size = self.words_emb_dim
         classifier_input_dim = self.n_topics
         if self.n_prior_covars > 0:
@@ -290,6 +292,7 @@ class torchScholar(nn.Module):
             self.embeddings_x_layer.weight.data.copy_(torch.from_numpy(init_emb)).to(self.device)
         else:
             xavier_uniform_(self.embeddings_x_layer.weight)
+            xavier_uniform_(self.embeddings_frame_layer.weight)
 
         # create the mean and variance components of the VAE
         self.mean_layer = nn.Linear(emb_size, self.n_topics)
@@ -342,10 +345,11 @@ class torchScholar(nn.Module):
         self.prior_logvar = torch.from_numpy(prior_logvar).to(self.device)
         self.prior_logvar.requires_grad = False
 
-    def forward(self, X, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    def forward(self, X, FRAMES, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
         Do a forward pass of the model
         :param X: np.array of word counts [batch_size x vocab_size]
+        :param FRAMES: np.array of frame counts [batch_size x frame_size]
         :param Y: np.array of labels [batch_size x n_classes]
         :param PC: np.array of covariates influencing the prior [batch_size x n_prior_covars]
         :param TC: np.array of covariates with explicit topic deviations [batch_size x n_topic_covariates]
@@ -361,6 +365,7 @@ class torchScholar(nn.Module):
 
         # embed the word counts
         en0_x = self.embeddings_x_layer(X)
+        en0_frame = self.embeddings_frame_layer(X)
         encoder_parts = [en0_x]
 
         # append additional components to the encoder, if given
@@ -455,7 +460,7 @@ class torchScholar(nn.Module):
             prior_mean = self.prior_covar_weights(PC)
             prior_logvar = self.prior_logvar.expand_as(posterior_logvar)
         else:
-            prior_mean   = self.prior_mean.expand_as(posterior_mean)
+            prior_mean = self.prior_mean.expand_as(posterior_mean)
             prior_logvar = self.prior_logvar.expand_as(posterior_logvar)
 
         if compute_loss:
@@ -466,17 +471,17 @@ class torchScholar(nn.Module):
     def _loss(self, X, Y, X_recon, Y_recon, prior_mean, prior_logvar, posterior_mean, posterior_logvar, do_average=True, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
 
         # compute reconstruction loss
-        NL = -(X * (X_recon+1e-10).log()).sum(1)
+        NL = -(X * (X_recon + 1e-10).log()).sum(1)
         # compute label loss
         if self.n_labels > 0:
-            NL += -(Y * (Y_recon+1e-10).log()).sum(1)
+            NL += -(Y * (Y_recon + 1e-10).log()).sum(1)
 
         # compute KLD
         prior_var = prior_logvar.exp()
         posterior_var = posterior_logvar.exp()
-        var_division    = posterior_var / prior_var
-        diff            = posterior_mean - prior_mean
-        diff_term       = diff * diff / prior_var
+        var_division = posterior_var / prior_var
+        diff = posterior_mean - prior_mean
+        diff_term = diff * diff / prior_var
         logvar_division = prior_logvar - posterior_logvar
 
         # put KLD together

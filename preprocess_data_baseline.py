@@ -160,10 +160,6 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
             print(i)
 
         text = item['text']
-        print(item['id'])
-        import sys
-        sys.exit(0)
-
         tokens, _ = tokenize(text, strip_html=strip_html, lower=lower, keep_numbers=keep_num, keep_alphanum=keep_alphanum, min_length=min_length, stopwords=stopword_set, vocab=vocab)
 
         # store the parsed documents
