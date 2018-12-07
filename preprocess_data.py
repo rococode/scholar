@@ -151,43 +151,49 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
     # make vocabulary
     train_parsed = []
     test_parsed = []
+    frame_train_parsed = []
+    frame_test_parsed = []
 
     print("Parsing %d documents" % n_items)
     word_counts = Counter()
     doc_counts = Counter()
     count = 0
 
+    frame_counts = Counter()
+    frame_doc_counts = Counter()
+
     vocab = None
     for i, item in enumerate(tqdm(all_items)):
         if i % 1000 == 0 and count > 0:
             print(i)
 
-        words = item['text']
+        tokens = item['text']
         frames = item['frames']
-        # print(item['id'])
-        # import sys
-        # sys.exit(0)
-
-        # tokens, _ = tokenize(text, strip_html=strip_html, lower=lower, keep_numbers=keep_num, keep_alphanum=keep_alphanum, min_length=min_length, stopwords=stopword_set, vocab=vocab)
-        tokens = words
 
         # store the parsed documents
         if i < n_train:
             train_parsed.append(tokens)
+            frame_train_parsed.append(frames)
         else:
             test_parsed.append(tokens)
+            frame_test_parsed.append(frames)
 
-        # keep track fo the number of documents with each word
+        # keep track of the number of documents with each word
         word_counts.update(tokens)
         doc_counts.update(set(tokens))
 
+        frame_counts.update(frames)
+        frame_doc_counts.update(set(frames))
+
     print("Size of full vocabulary=%d" % len(word_counts))
+    print("Size of full frame vocab=%d" % len(frame_counts))
 
     print("Selecting the vocabulary")
     most_common = doc_counts.most_common()
     words, doc_counts = zip(*most_common)
     doc_freqs = np.array(doc_counts) / float(n_items)
     vocab = [word for i, word in enumerate(words) if doc_counts[i] >= min_doc_count and doc_freqs[i] <= max_doc_freq]
+
     most_common = [word for i, word in enumerate(words) if doc_freqs[i] > max_doc_freq]
     if max_doc_freq < 1.0:
         print("Excluding words with frequency > {:0.2f}:".format(max_doc_freq), most_common)
@@ -198,12 +204,26 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
             vocab = vocab[:int(vocab_size)]
 
     vocab_size = len(vocab)
+
+    most_common = frame_doc_counts.most_common()
+    frames, frame_doc_counts = zip(*most_common)
+    frame_doc_freqs = np.array(frame_doc_counts) / float(n_items)
+    frame_vocab = [frame for i, frame in enumerate(frames) if frame_doc_counts[i] >= min_doc_count and frame_doc_freqs[i] <= max_doc_freq]
+
     print("Final vocab size = %d" % vocab_size)
+    print("Final frame vocab size = %d" % len(frame_vocab))
 
     print("Most common words remaining:", ' '.join(vocab[:10]))
+    # sorts to alphabetical order
     vocab.sort()
+    print("Most common frames remaining:", ' '.join(frame_vocab[:10]))
+    frame_vocab.sort()
 
     fh.write_to_json(vocab, os.path.join(output_dir, train_prefix + '.vocab.json'))
+    fh.write_to_json(frame_vocab, os.path.join(output_dir, train_prefix + '.framevocab.json'))
+
+    import sys
+    sys.exit(0)
 
     train_X_sage, tr_aspect, tr_no_aspect, tr_widx, vocab_for_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix)
     if n_test > 0:
