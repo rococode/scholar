@@ -1,6 +1,7 @@
 import os
 import sys
 from optparse import OptionParser
+from tqdm import tqdm
 
 import gensim
 import numpy as np
@@ -397,8 +398,9 @@ def train(model, network_architecture, X, Y, PC, TC, batch_size=200, training_ep
     else:
         l1_beta_ci = None
 
+    print("Starting training epochs...")
     # Training cycle
-    for epoch in range(training_epochs):
+    for epoch in tqdm(range(training_epochs)):
         avg_cost = 0.
         accuracy = 0.
         avg_nl = 0.

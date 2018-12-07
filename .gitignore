@@ -112,3 +112,6 @@ output
 out/
 output-baseline/
 output-imdb-baseline/
+output-base-arr-label/
+output-base-arr-nolabel/
+

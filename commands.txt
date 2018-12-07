@@ -13,3 +13,14 @@ python run_scholar.py data/imdb/processed/ -k 50 --test-prefix test --labels sen
 # NPMI
 
 python compute_npmi.py output-imdb-baseline/topics.txt data/imdb/processed/train.npz data/imdb/processed/train.vocab.json
+
+### NEW FRAMES
+
+# this command generates BOTH the test and train stuff
+python preprocess_data.py data/frames/train.jsonlist data/frames/processed --vocab-size 5000 --label sentiment --test data/frames/test.jsonlist
+
+# stored in output-base-arr-nolabel
+python run_scholar.py data/frames/processed -k 50 --test test
+
+# stored in output-base-arr-label
+python run_scholar.py data/frames/processed -k 50 --test test --labels sentiment

@@ -1,14 +1,15 @@
 import os
 import re
-import sys
 import string
-from optparse import OptionParser
+import sys
 from collections import Counter
+from optparse import OptionParser
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.io import savemat
+from tqdm import tqdm
 
 import file_handling as fh
 
@@ -67,6 +68,7 @@ def main(args):
 
     (options, args) = parser.parse_args(args)
 
+    print("ARGS:", args)
     train_infile = args[0]
     output_dir = args[1]
 
@@ -92,11 +94,12 @@ def main(args):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower, min_length, label_fields=label_fields)
+    preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower, min_length,
+                    label_fields=label_fields)
 
 
-def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False, strip_html=False, lower=True, min_length=3, label_fields=None):
-
+def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False,
+                    strip_html=False, lower=True, min_length=3, label_fields=None):
     if stopwords == 'mallet':
         print("Using Mallet stopwords")
         stopword_list = fh.read_text(os.path.join('stopwords', 'mallet_stopwords.txt'))
@@ -155,16 +158,18 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
     count = 0
 
     vocab = None
-    for i, item in enumerate(all_items):
+    for i, item in enumerate(tqdm(all_items)):
         if i % 1000 == 0 and count > 0:
             print(i)
 
-        text = item['text']
-        print(item['id'])
-        import sys
-        sys.exit(0)
+        words = item['text']
+        frames = item['frames']
+        # print(item['id'])
+        # import sys
+        # sys.exit(0)
 
-        tokens, _ = tokenize(text, strip_html=strip_html, lower=lower, keep_numbers=keep_num, keep_alphanum=keep_alphanum, min_length=min_length, stopwords=stopword_set, vocab=vocab)
+        # tokens, _ = tokenize(text, strip_html=strip_html, lower=lower, keep_numbers=keep_num, keep_alphanum=keep_alphanum, min_length=min_length, stopwords=stopword_set, vocab=vocab)
+        tokens = words
 
         # store the parsed documents
         if i < n_train:
@@ -202,7 +207,7 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
 
     train_X_sage, tr_aspect, tr_no_aspect, tr_widx, vocab_for_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix)
     if n_test > 0:
-        test_X_sage, te_aspect, te_no_aspect, _, _= process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix)
+        test_X_sage, te_aspect, te_no_aspect, _, _ = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix)
 
     train_sum = np.array(train_X_sage.sum(axis=0))
     print("%d words missing from training data" % np.sum(train_sum == 0))
@@ -228,6 +233,7 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
     n_items = len(items)
     vocab_size = len(vocab)
     vocab_index = dict(zip(vocab, range(vocab_size)))
+    # frame_index = dict(zip(frames, range(frame_vocab_size)))
 
     ids = []
     for i, item in enumerate(items):
@@ -270,7 +276,7 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
     word_counter = Counter()
     doc_lines = []
     print("Converting to count representations")
-    for i, words in enumerate(parsed):
+    for i, words in enumerate(tqdm(parsed)):
         # get the vocab indices of words that are in the vocabulary
         indices = [vocab_index[word] for word in words if word in vocab_index]
         word_subset = [word for word in words if word in vocab_index]
@@ -329,73 +335,72 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
     return sparse_X_sage, sage_aspect, sage_no_aspect, widx, vocab_for_sage
 
 
-def tokenize(text, strip_html=False, lower=True, keep_emails=False, keep_at_mentions=False, keep_numbers=False, keep_alphanum=False, min_length=3, stopwords=None, vocab=None):
-    text = clean_text(text, strip_html, lower, keep_emails, keep_at_mentions)
-    tokens = text.split()
-
-    if stopwords is not None:
-        tokens = ['_' if t in stopwords else t for t in tokens]
-
-    # remove tokens that contain numbers
-    if not keep_alphanum and not keep_numbers:
-        tokens = [t if alpha.match(t) else '_' for t in tokens]
-
-    # or just remove tokens that contain a combination of letters and numbers
-    elif not keep_alphanum:
-        tokens = [t if alpha_or_num.match(t) else '_' for t in tokens]
-
-    # drop short tokens
-    if min_length > 0:
-        tokens = [t if len(t) >= min_length else '_' for t in tokens]
-
-    counts = Counter()
-
-    unigrams = [t for t in tokens if t != '_']
-    counts.update(unigrams)
-
-    if vocab is not None:
-        tokens = [token for token in unigrams if token in vocab]
-    else:
-        tokens = unigrams
-
-    return tokens, counts
-
-
-def clean_text(text, strip_html=False, lower=True, keep_emails=False, keep_at_mentions=False):
-    # remove html tags
-    if strip_html:
-        text = re.sub(r'<[^>]+>', '', text)
-    else:
-        # replace angle brackets
-        text = re.sub(r'<', '(', text)
-        text = re.sub(r'>', ')', text)
-    # lower case
-    if lower:
-        text = text.lower()
-    # eliminate email addresses
-    if not keep_emails:
-        text = re.sub(r'\S+@\S+', ' ', text)
-    # eliminate @mentions
-    if not keep_at_mentions:
-        text = re.sub(r'\s@\S+', ' ', text)
-    # replace underscores with spaces
-    text = re.sub(r'_', ' ', text)
-    # break off single quotes at the ends of words
-    text = re.sub(r'\s\'', ' ', text)
-    text = re.sub(r'\'\s', ' ', text)
-    # remove periods
-    text = re.sub(r'\.', '', text)
-    # replace all other punctuation (except single quotes) with spaces
-    text = replace.sub(' ', text)
-    # remove single quotes
-    text = re.sub(r'\'', '', text)
-    # replace all whitespace with a single space
-    text = re.sub(r'\s', ' ', text)
-    # strip off spaces on either end
-    text = text.strip()
-    return text
-
-
 if __name__ == '__main__':
+    print(sys.argv)
     main(sys.argv[1:])
 
+# def tokenize(text, strip_html=False, lower=True, keep_emails=False, keep_at_mentions=False, keep_numbers=False, keep_alphanum=False, min_length=3, stopwords=None, vocab=None):
+#     text = clean_text(text, strip_html, lower, keep_emails, keep_at_mentions)
+#     tokens = text.split()
+#
+#     if stopwords is not None:
+#         tokens = ['_' if t in stopwords else t for t in tokens]
+#
+#     # remove tokens that contain numbers
+#     if not keep_alphanum and not keep_numbers:
+#         tokens = [t if alpha.match(t) else '_' for t in tokens]
+#
+#     # or just remove tokens that contain a combination of letters and numbers
+#     elif not keep_alphanum:
+#         tokens = [t if alpha_or_num.match(t) else '_' for t in tokens]
+#
+#     # drop short tokens
+#     if min_length > 0:
+#         tokens = [t if len(t) >= min_length else '_' for t in tokens]
+#
+#     counts = Counter()
+#
+#     unigrams = [t for t in tokens if t != '_']
+#     counts.update(unigrams)
+#
+#     if vocab is not None:
+#         tokens = [token for token in unigrams if token in vocab]
+#     else:
+#         tokens = unigrams
+#
+#     return tokens, counts
+
+
+# def clean_text(text, strip_html=False, lower=True, keep_emails=False, keep_at_mentions=False):
+#     # remove html tags
+#     if strip_html:
+#         text = re.sub(r'<[^>]+>', '', text)
+#     else:
+#         # replace angle brackets
+#         text = re.sub(r'<', '(', text)
+#         text = re.sub(r'>', ')', text)
+#     # lower case
+#     if lower:
+#         text = text.lower()
+#     # eliminate email addresses
+#     if not keep_emails:
+#         text = re.sub(r'\S+@\S+', ' ', text)
+#     # eliminate @mentions
+#     if not keep_at_mentions:
+#         text = re.sub(r'\s@\S+', ' ', text)
+#     # replace underscores with spaces
+#     text = re.sub(r'_', ' ', text)
+#     # break off single quotes at the ends of words
+#     text = re.sub(r'\s\'', ' ', text)
+#     text = re.sub(r'\'\s', ' ', text)
+#     # remove periods
+#     text = re.sub(r'\.', '', text)
+#     # replace all other punctuation (except single quotes) with spaces
+#     text = replace.sub(' ', text)
+#     # remove single quotes
+#     text = re.sub(r'\'', '', text)
+#     # replace all whitespace with a single space
+#     text = re.sub(r'\s', ' ', text)
+#     # strip off spaces on either end
+#     text = text.strip()
+#     return text

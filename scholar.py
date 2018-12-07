@@ -345,7 +345,8 @@ class torchScholar(nn.Module):
         self.prior_logvar = torch.from_numpy(prior_logvar).to(self.device)
         self.prior_logvar.requires_grad = False
 
-    def forward(self, X, FRAMES, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    # def forward(self, X, FRAMES, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    def forward(self, X, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
         Do a forward pass of the model
         :param X: np.array of word counts [batch_size x vocab_size]
@@ -367,6 +368,7 @@ class torchScholar(nn.Module):
         en0_x = self.embeddings_x_layer(X)
         en0_frame = self.embeddings_frame_layer(X)
         encoder_parts = [en0_x]
+        # encoder_parts = [en0_x, en0_frame]
 
         # append additional components to the encoder, if given
         if self.n_prior_covars > 0:

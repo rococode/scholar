@@ -52,6 +52,5 @@ def process(dir, dest, type):
             tokenize_and_save(path, file_name, dest + os.sep + sentiment, type, sentiment)
             # break
 
-
 process(TRAIN_DIR, OUT_TRAIN_DIR, "train")
 process(TEST_DIR, OUT_TEST_DIR, "test")
