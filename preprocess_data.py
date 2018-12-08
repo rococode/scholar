@@ -148,6 +148,9 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
     else:
         label_fields = []
 
+    print("label_fields", label_fields)
+    print("label_lists", label_lists)
+
     # make vocabulary
     train_parsed = []
     test_parsed = []
@@ -222,38 +225,49 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
     fh.write_to_json(vocab, os.path.join(output_dir, train_prefix + '.vocab.json'))
     fh.write_to_json(frame_vocab, os.path.join(output_dir, train_prefix + '.framevocab.json'))
 
-    import sys
-    sys.exit(0)
+    # train_X_sage, tr_aspect, tr_no_aspect, tr_widx, vocab_for_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix, frame_vocab, frame_train_parsed)
 
-    train_X_sage, tr_aspect, tr_no_aspect, tr_widx, vocab_for_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix)
-    if n_test > 0:
-        test_X_sage, te_aspect, te_no_aspect, _, _ = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix)
-
-    train_sum = np.array(train_X_sage.sum(axis=0))
-    print("%d words missing from training data" % np.sum(train_sum == 0))
+    process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix, frame_vocab, frame_train_parsed)
 
     if n_test > 0:
-        test_sum = np.array(test_X_sage.sum(axis=0))
-        print("%d words missing from test data" % np.sum(test_sum == 0))
-
-    sage_output = {'tr_data': train_X_sage, 'tr_aspect': tr_aspect, 'widx': tr_widx, 'vocab': vocab_for_sage}
-    if n_test > 0:
-        sage_output['te_data'] = test_X_sage
-        sage_output['te_aspect'] = te_aspect
-    savemat(os.path.join(output_dir, 'sage_labeled.mat'), sage_output)
-    sage_output['tr_aspect'] = tr_no_aspect
-    if n_test > 0:
-        sage_output['te_aspect'] = te_no_aspect
-    savemat(os.path.join(output_dir, 'sage_unlabeled.mat'), sage_output)
+        # test_X_sage, te_aspect, te_no_aspect, _, _ = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix)
+        process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix, frame_vocab, frame_test_parsed)
 
     print("Done!")
 
+    # train_sum = np.array(train_X_sage.sum(axis=0))
+    # print("%d words missing from training data" % np.sum(train_sum == 0))
+    #
+    # if n_test > 0:
+    #     test_sum = np.array(test_X_sage.sum(axis=0))
+    #     print("%d words missing from test data" % np.sum(test_sum == 0))
+    #
+    # sage_output = {'tr_data': train_X_sage, 'tr_aspect': tr_aspect, 'widx': tr_widx, 'vocab': vocab_for_sage}
+    # if n_test > 0:
+    #     sage_output['te_data'] = test_X_sage
+    #     sage_output['te_aspect'] = te_aspect
+    # savemat(os.path.join(output_dir, 'sage_labeled.mat'), sage_output)
+    # sage_output['tr_aspect'] = tr_no_aspect
+    # if n_test > 0:
+    #     sage_output['te_aspect'] = te_no_aspect
+    # savemat(os.path.join(output_dir, 'sage_unlabeled.mat'), sage_output)
 
-def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, output_prefix):
+
+def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, output_prefix, frame_vocab, frame_parsed):
+    """
+    process some part of the given data
+    :param items: the actual json objects that are in the jsonlist
+    :param parsed: list of lists of tokens (one inner list per doc)
+    :param label_fields: list of label names i.e. "sentiment"
+    :param label_lists: dict of label names to list of possible values
+    """
     n_items = len(items)
     vocab_size = len(vocab)
     vocab_index = dict(zip(vocab, range(vocab_size)))
-    # frame_index = dict(zip(frames, range(frame_vocab_size)))
+
+    # create frame_1 : 1, frame_2 : 2, etc.
+    frame_vocab_size = len(frame_vocab)
+    frame_index = dict(zip(frame_vocab, range(len(frame_vocab))))
 
     ids = []
     for i, item in enumerate(items):
@@ -281,25 +295,21 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
 
             labels_df = pd.DataFrame(label_matrix, index=ids, columns=label_list_strings)
             labels_df.to_csv(os.path.join(output_dir, output_prefix + '.' + label_field + '.csv'))
-            label_vector_df = pd.DataFrame(label_vector, index=ids, columns=[label_field])
-            if n_labels == 2:
-                label_vector_df.to_csv(os.path.join(output_dir, output_prefix + '.' + label_field + '_vector.csv'))
+            # label_vector_df = pd.DataFrame(label_vector, index=ids, columns=[label_field])
+            # if n_labels == 2:
+            #     label_vector_df.to_csv(os.path.join(output_dir, output_prefix + '.' + label_field + '_vector.csv'))
 
     X = np.zeros([n_items, vocab_size], dtype=int)
-
-    dat_strings = []
-    dat_labels = []
-    mallet_strings = []
-    fast_text_lines = []
+    print("x shape: ", X.shape)
 
     counter = Counter()
     word_counter = Counter()
-    doc_lines = []
     print("Converting to count representations")
-    for i, words in enumerate(tqdm(parsed)):
+
+    for i, frames in enumerate(tqdm(parsed)):
         # get the vocab indices of words that are in the vocabulary
-        indices = [vocab_index[word] for word in words if word in vocab_index]
-        word_subset = [word for word in words if word in vocab_index]
+        indices = [vocab_index[word] for word in frames if word in vocab_index]
+        word_subset = [word for word in frames if word in vocab_index]
 
         counter.clear()
         counter.update(indices)
@@ -307,17 +317,10 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
         word_counter.update(word_subset)
 
         if len(counter.keys()) > 0:
-            # udpate the counts
-            mallet_strings.append(str(i) + '\t' + 'en' + '\t' + ' '.join(word_subset))
-
-            dat_string = str(int(len(counter))) + ' '
-            dat_string += ' '.join([str(k) + ':' + str(int(v)) for k, v in zip(list(counter.keys()), list(counter.values()))])
-            dat_strings.append(dat_string)
-
-            # for dat formart, assume just one label is given
-            if len(label_fields) > 0:
-                label = items[i][label_fields[-1]]
-                dat_labels.append(str(label_index[str(label)]))
+            # # for dat format, assume just one label is given
+            # if len(label_fields) > 0:
+            #     label = items[i][label_fields[-1]]
+            #     dat_labels.append(str(label_index[str(label)]))
 
             values = list(counter.values())
             X[np.ones(len(counter.keys()), dtype=int) * i, list(counter.keys())] += values
@@ -330,29 +333,58 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
 
     fh.write_to_json(ids, os.path.join(output_dir, output_prefix + '.ids.json'))
 
+    F = np.zeros([n_items, frame_vocab_size], dtype=int)
+    print("f shape: ", F.shape)
+
+    counter = Counter()
+    frame_counter = Counter()
+    print("Converting to count representations")
+
+    for i, frames in enumerate(tqdm(frame_parsed)):
+        # get the vocab indices of words that are in the vocabulary
+        indices = [frame_index[frame] for frame in frames if frame in frame_index]
+        frame_subset = [frame for frame in frames if frame in frame_index]
+
+        counter.clear()
+        counter.update(indices)
+        frame_counter.clear()
+        frame_counter.update(frame_subset)
+
+        if len(counter.keys()) > 0:
+            values = list(counter.values())
+            F[np.ones(len(counter.keys()), dtype=int) * i, list(counter.keys())] += values
+
+    # convert to a sparse representation
+    sparse_F = sparse.csr_matrix(F)
+    fh.save_sparse(sparse_F, os.path.join(output_dir, output_prefix + '.frames.npz'))
+
+    print("Size of {:s} document-frame matrix:".format(output_prefix), sparse_F.shape)
+
+    return
+
     # save output for Mallet
-    fh.write_list_to_text(mallet_strings, os.path.join(output_dir, output_prefix + '.mallet.txt'))
+    # fh.write_list_to_text(mallet_strings, os.path.join(output_dir, output_prefix + '.mallet.txt'))
 
     # save output for David Blei's LDA/SLDA code
-    fh.write_list_to_text(dat_strings, os.path.join(output_dir, output_prefix + '.data.dat'))
-    if len(dat_labels) > 0:
-        fh.write_list_to_text(dat_labels, os.path.join(output_dir, output_prefix + '.' + label_field + '.dat'))
+    # fh.write_list_to_text(dat_strings, os.path.join(output_dir, output_prefix + '.data.dat'))
+    # if len(dat_labels) > 0:
+    #     fh.write_list_to_text(dat_labels, os.path.join(output_dir, output_prefix + '.' + label_field + '.dat'))
 
     # save output for Jacob Eisenstein's SAGE code:
-    sparse_X_sage = sparse.csr_matrix(X, dtype=float)
-    vocab_for_sage = np.zeros((vocab_size,), dtype=np.object)
-    vocab_for_sage[:] = vocab
+    # sparse_X_sage = sparse.csr_matrix(X, dtype=float)
+    # vocab_for_sage = np.zeros((vocab_size,), dtype=np.object)
+    # vocab_for_sage[:] = vocab
 
     # for SAGE, assume only a single label has been given
-    if len(label_fields) > 0:
-        # convert array to vector of labels for SAGE
-        sage_aspect = np.argmax(np.array(labels_df.values, dtype=float), axis=1) + 1
-    else:
-        sage_aspect = np.ones([n_items, 1], dtype=float)
-    sage_no_aspect = np.array([n_items, 1], dtype=float)
-    widx = np.arange(vocab_size, dtype=float) + 1
-
-    return sparse_X_sage, sage_aspect, sage_no_aspect, widx, vocab_for_sage
+    # if len(label_fields) > 0:
+    #     # convert array to vector of labels for SAGE
+    #     sage_aspect = np.argmax(np.array(labels_df.values, dtype=float), axis=1) + 1
+    # else:
+    #     sage_aspect = np.ones([n_items, 1], dtype=float)
+    # sage_no_aspect = np.array([n_items, 1], dtype=float)
+    # widx = np.arange(vocab_size, dtype=float) + 1
+    #
+    # return sparse_X_sage, sage_aspect, sage_no_aspect, widx, vocab_for_sage
 
 
 if __name__ == '__main__':

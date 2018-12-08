@@ -9,6 +9,7 @@ from torch.nn.init import xavier_uniform_
 class Scholar(object):
 
     def __init__(self, config, alpha=1.0, learning_rate=0.001, init_embeddings=None, update_embeddings=True,
+                 init_frame_embeddings = None, update_frame_embeddings=True,
                  init_bg=None, update_background=True, adam_beta1=0.99, adam_beta2=0.999, device=None):
 
         """
@@ -59,11 +60,12 @@ class Scholar(object):
         grad_params = filter(lambda p: p.requires_grad, self._model.parameters())
         self.optimizer = optim.Adam(grad_params, lr=learning_rate, betas=(adam_beta1, adam_beta2))
 
-    def fit(self, X, Y, PC, TC, eta_bn_prop=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    def fit(self, X, Y, F, PC, TC, eta_bn_prop=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
         Fit the model to a minibatch of data
         :param X: np.array of document word counts [batch size x vocab size]
         :param Y: np.array of labels [batch size x n_labels]
+        :param F: np.array of labels [batch size x frame vocab size]
         :param PC: np.array of prior covariates influencing the document-topic prior [batch size x n_prior_covars]
         :param TC: np.array of topic covariates to be associated with topical deviations [batch size x n_topic_covars]
         :param l1_beta: np.array of prior variances on the topic weights
@@ -75,6 +77,8 @@ class Scholar(object):
         X = torch.Tensor(X).to(self.device)
         if Y is not None:
             Y = torch.Tensor(Y).to(self.device)
+        if F is not None:
+            F = torch.Tensor(F).to(self.device)
         if PC is not None:
             PC = torch.Tensor(PC).to(self.device)
         if TC is not None:
@@ -82,7 +86,7 @@ class Scholar(object):
         self.optimizer.zero_grad()
 
         # do a forward pass
-        thetas, X_recon, Y_probs, losses = self._model(X, Y, PC, TC, eta_bn_prop=eta_bn_prop, l1_beta=l1_beta, l1_beta_c=l1_beta_c, l1_beta_ci=l1_beta_ci)
+        thetas, X_recon, Y_probs, losses = self._model(X, Y, F, PC, TC, eta_bn_prop=eta_bn_prop, l1_beta=l1_beta, l1_beta_c=l1_beta_c, l1_beta_ci=l1_beta_ci)
         loss, nl, kld = losses
         # update model
         loss.backward()
@@ -92,7 +96,7 @@ class Scholar(object):
             Y_probs = Y_probs.to('cpu').detach().numpy()
         return loss.to('cpu').detach().numpy(), Y_probs, thetas.to('cpu').detach().numpy(), nl.to('cpu').detach().numpy(), kld.to('cpu').detach().numpy()
 
-    def predict(self, X, PC, TC, eta_bn_prop=0.0):
+    def predict(self, X, FRAMES, PC, TC, eta_bn_prop=0.0):
         """
         Predict labels for a minibatch of data
         """
@@ -100,12 +104,13 @@ class Scholar(object):
         batch_size = self.get_batch_size(X)
         Y = np.zeros((batch_size, self.network_architecture['n_labels'])).astype('float32')
         X = torch.Tensor(X).to(self.device)
+        FRAMES = torch.Tensor(FRAMES).to(self.device)
         Y = torch.Tensor(Y).to(self.device)
         if PC is not None:
             PC = torch.Tensor(PC).to(self.device)
         if TC is not None:
             TC = torch.Tensor(TC).to(self.device)
-        theta, _, Y_recon, _ = self._model(X, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
+        theta, _, Y_recon, _ = self._model(X, Y, FRAMES, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
         return theta, Y_recon.to('cpu').detach().numpy()
 
     def predict_from_topics(self, theta, PC, TC, eta_bn_prop=0.0):
@@ -120,7 +125,7 @@ class Scholar(object):
         probs = self._model.predict_from_theta(theta, PC, TC)
         return probs.to('cpu').detach().numpy()
 
-    def get_losses(self, X, Y, PC, TC, eta_bn_prop=0.0, n_samples=0):
+    def get_losses(self, X, Y, FRAMES, PC, TC, eta_bn_prop=0.0, n_samples=0):
         """
         Compute and return the loss values for all instances in X, Y, PC, and TC averaged over multiple samples
         """
@@ -129,6 +134,8 @@ class Scholar(object):
             X = np.expand_dims(X, axis=0)
         if Y is not None and batch_size == 1:
             Y = np.expand_dims(Y, axis=0)
+        if FRAMES is not None and batch_size == 1:
+            FRAMES = np.expand_dims(FRAMES, axis=0)
         if PC is not None and batch_size == 1:
             PC = np.expand_dims(PC, axis=0)
         if TC is not None and batch_size == 1:
@@ -136,27 +143,29 @@ class Scholar(object):
         X = torch.Tensor(X).to(self.device)
         if Y is not None:
             Y = torch.Tensor(Y).to(self.device)
+        if FRAMES is not None:
+            FRAMES = torch.Tensor(FRAMES).to(self.device)
         if PC is not None:
             PC = torch.Tensor(PC).to(self.device)
         if TC is not None:
             TC = torch.Tensor(TC).to(self.device)
         if n_samples == 0:
-            _, _, _, temp = self._model(X, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
+            _, _, _, temp = self._model(X, Y, FRAMES, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
             loss, NL, KLD = temp
             losses = loss.to('cpu').detach().numpy()
         else:
-            _, _, _, temp = self._model(X, Y, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
+            _, _, _, temp = self._model(X, Y, FRAMES, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
             loss, NL, KLD = temp
             losses = loss.to('cpu').detach().numpy()
             for s in range(1, n_samples):
-                _, _, _, temp = self._model(X, Y, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
+                _, _, _, temp = self._model(X, Y, FRAMES, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
                 loss, NL, KLD = temp
                 losses += loss.to('cpu').detach().numpy()
             losses /= float(n_samples)
 
         return losses
 
-    def compute_theta(self, X, Y, PC, TC, eta_bn_prop=0.0):
+    def compute_theta(self, X, Y, F, PC, TC, eta_bn_prop=0.0):
         """
         Return the latent document representation (mean of posterior of theta) for a given batch of X, Y, PC, and TC
         """
@@ -165,6 +174,8 @@ class Scholar(object):
             X = np.expand_dims(X, axis=0)
         if Y is not None and batch_size == 1:
             Y = np.expand_dims(Y, axis=0)
+        if F is not None and batch_size == 1:
+            F = np.expand_dims(F, axis=0)
         if PC is not None and batch_size == 1:
             PC = np.expand_dims(PC, axis=0)
         if TC is not None and batch_size == 1:
@@ -173,11 +184,13 @@ class Scholar(object):
         X = torch.Tensor(X).to(self.device)
         if Y is not None:
             Y = torch.Tensor(Y).to(self.device)
+        if F is not None:
+            F = torch.Tensor(F).to(self.device)
         if PC is not None:
             PC = torch.Tensor(PC).to(self.device)
         if TC is not None:
             TC = torch.Tensor(TC).to(self.device)
-        theta, _, _, _ = self._model(X, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
+        theta, _, _, _ = self._model(X, Y, F, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
 
         return theta.to('cpu').detach().numpy()
 
@@ -247,6 +260,7 @@ class torchScholar(nn.Module):
 
         # load the configuration
         self.vocab_size = config['vocab_size']
+        self.frame_vocab_size = config['frame_vocab_size']
         self.words_emb_dim = config['embedding_dim']
         self.frame_emb_dim = config['frame_embedding_dim']
         self.n_topics = config['n_topics']
@@ -270,8 +284,8 @@ class torchScholar(nn.Module):
 
         # create the encoder
         self.embeddings_x_layer = nn.Linear(self.vocab_size, self.words_emb_dim, bias=False)
-        self.embeddings_frame_layer = nn.Linear(self.vocab_size, self.frame_emb_dim, bias=False)
-        emb_size = self.words_emb_dim
+        self.embeddings_frame_layer = nn.Linear(self.frame_vocab_size, self.frame_emb_dim, bias=False)
+        emb_size = self.words_emb_dim + self.frame_emb_dim
         classifier_input_dim = self.n_topics
         if self.n_prior_covars > 0:
             emb_size += self.n_prior_covars
@@ -346,12 +360,12 @@ class torchScholar(nn.Module):
         self.prior_logvar.requires_grad = False
 
     # def forward(self, X, FRAMES, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
-    def forward(self, X, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    def forward(self, X, Y, FRAMES, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
         Do a forward pass of the model
         :param X: np.array of word counts [batch_size x vocab_size]
-        :param FRAMES: np.array of frame counts [batch_size x frame_size]
         :param Y: np.array of labels [batch_size x n_classes]
+        :param FRAMES: np.array of frame counts [batch_size x frame_vocab_size]
         :param PC: np.array of covariates influencing the prior [batch_size x n_prior_covars]
         :param TC: np.array of covariates with explicit topic deviations [batch_size x n_topic_covariates]
         :param compute_loss: if True, compute and return the loss
@@ -366,9 +380,9 @@ class torchScholar(nn.Module):
 
         # embed the word counts
         en0_x = self.embeddings_x_layer(X)
-        en0_frame = self.embeddings_frame_layer(X)
-        encoder_parts = [en0_x]
-        # encoder_parts = [en0_x, en0_frame]
+        en0_frame = self.embeddings_frame_layer(FRAMES)
+        # encoder_parts = [en0_x]
+        encoder_parts = [en0_x, en0_frame]
 
         # append additional components to the encoder, if given
         if self.n_prior_covars > 0:

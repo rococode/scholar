@@ -1,11 +1,11 @@
 import os
 import sys
 from optparse import OptionParser
-from tqdm import tqdm
 
 import gensim
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 import file_handling as fh
 from scholar import Scholar
@@ -93,6 +93,9 @@ def main(args):
     options.n_train, vocab_size = train_X.shape
     options.n_labels = n_labels
 
+    train_F, frame_vocab = load_frame_counts(input_dir, options.train_prefix)
+    _, frame_vocab_size = train_F.shape
+
     if n_labels > 0:
         print("Train label proportions:", np.mean(train_labels, axis=0))
 
@@ -102,12 +105,13 @@ def main(args):
     train_labels, dev_labels = split_matrix(train_labels, train_indices, dev_indices)
     train_prior_covars, dev_prior_covars = split_matrix(train_prior_covars, train_indices, dev_indices)
     train_topic_covars, dev_topic_covars = split_matrix(train_topic_covars, train_indices, dev_indices)
+    train_F, dev_F = split_matrix(train_F, train_indices, dev_indices)
+
     if dev_indices is not None:
         dev_ids = [train_ids[i] for i in dev_indices]
         train_ids = [train_ids[i] for i in train_indices]
     else:
         dev_ids = None
-
 
     n_train, _ = train_X.shape
 
@@ -118,6 +122,7 @@ def main(args):
         test_prior_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.prior_covars, covariate_selector=prior_covar_selector)
         test_topic_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.topic_covars, covariate_selector=topic_covar_selector)
         n_test, _ = test_X.shape
+        test_F, _ = load_frame_counts(input_dir, options.test_prefix, vocab=frame_vocab)
 
     else:
         test_X = None
@@ -125,6 +130,7 @@ def main(args):
         test_labels = None
         test_prior_covars = None
         test_topic_covars = None
+        test_F = None
 
     # initialize the background using overall word frequencies
     init_bg = get_init_bg(train_X)
@@ -132,7 +138,7 @@ def main(args):
         init_bg = np.zeros_like(init_bg)
 
     # combine the network configuration parameters into a dictionary
-    network_architecture = make_network(options, vocab_size, label_type, n_labels, n_prior_covars, n_topic_covars)
+    network_architecture = make_network(options, vocab_size, frame_vocab_size, label_type, n_labels, n_prior_covars, n_topic_covars)
 
     print("Network architecture:")
     for key, val in network_architecture.items():
@@ -141,12 +147,18 @@ def main(args):
     # load word vectors
     embeddings, update_embeddings = load_word_vectors(options, rng, vocab)
 
+    frame_embeddings, update_frame_embeddings = load_frame_vectors(options, rng, frame_vocab)
+
     # create the model
-    model = Scholar(network_architecture, alpha=options.alpha, learning_rate=options.learning_rate, init_embeddings=embeddings, update_embeddings=update_embeddings, init_bg=init_bg, adam_beta1=options.momentum, device=options.device)
+    model = Scholar(network_architecture, alpha=options.alpha, learning_rate=options.learning_rate, init_embeddings=embeddings, update_embeddings=update_embeddings,
+                    init_frame_embeddings=frame_embeddings, update_frame_embeddings=update_frame_embeddings, init_bg=init_bg,
+                    adam_beta1=options.momentum, device=options.device)
 
     # train the model
     print("Optimizing full model")
-    model = train(model, network_architecture, train_X, train_labels, train_prior_covars, train_topic_covars, training_epochs=options.epochs, batch_size=options.batch_size, rng=rng, X_dev=dev_X, Y_dev=dev_labels, PC_dev=dev_prior_covars, TC_dev=dev_topic_covars)
+    model = train(model, network_architecture, train_X, train_labels, train_F, train_prior_covars, train_topic_covars, training_epochs=options.epochs, batch_size=options.batch_size, rng=rng,
+                  X_dev=dev_X,
+                  Y_dev=dev_labels, PC_dev=dev_prior_covars, TC_dev=dev_topic_covars)
 
     # make output directory
     fh.makedirs(options.output_dir)
@@ -156,25 +168,25 @@ def main(args):
 
     # Evaluate perplexity on dev and test data
     if dev_X is not None:
-        perplexity = evaluate_perplexity(model, dev_X, dev_labels, dev_prior_covars, dev_topic_covars, options.batch_size, eta_bn_prop=0.0)
+        perplexity = evaluate_perplexity(model, dev_X, dev_labels, dev_F, dev_prior_covars, dev_topic_covars, options.batch_size, eta_bn_prop=0.0)
         print("Dev perplexity = %0.4f" % perplexity)
         fh.write_list_to_text([str(perplexity)], os.path.join(options.output_dir, 'perplexity.dev.txt'))
 
     if test_X is not None:
-        perplexity = evaluate_perplexity(model, test_X, test_labels, test_prior_covars, test_topic_covars, options.batch_size, eta_bn_prop=0.0)
+        perplexity = evaluate_perplexity(model, test_X, test_labels, test_F, test_prior_covars, test_topic_covars, options.batch_size, eta_bn_prop=0.0)
         print("Test perplexity = %0.4f" % perplexity)
         fh.write_list_to_text([str(perplexity)], os.path.join(options.output_dir, 'perplexity.test.txt'))
 
     # evaluate accuracy on predicting labels
     if n_labels > 0:
         print("Predicting labels")
-        predict_labels_and_evaluate(model, train_X, train_labels, train_prior_covars, train_topic_covars, options.output_dir, subset='train')
+        predict_labels_and_evaluate(model, train_X, train_labels, train_F, train_prior_covars, train_topic_covars, options.output_dir, subset='train')
 
         if dev_X is not None:
-            predict_labels_and_evaluate(model, dev_X, dev_labels, dev_prior_covars, dev_topic_covars, options.output_dir, subset='dev')
+            predict_labels_and_evaluate(model, dev_X, dev_labels, dev_F, dev_prior_covars, dev_topic_covars, options.output_dir, subset='dev')
 
         if test_X is not None:
-            predict_labels_and_evaluate(model, test_X, test_labels, test_prior_covars, test_topic_covars, options.output_dir, subset='test')
+            predict_labels_and_evaluate(model, test_X, test_labels, test_F, test_prior_covars, test_topic_covars, options.output_dir, subset='test')
 
     # print label probabilities for each topic
     if n_labels > 0:
@@ -182,13 +194,13 @@ def main(args):
 
     # save document representations
     print("Saving document representations")
-    save_document_representations(model, train_X, train_labels, train_prior_covars, train_topic_covars, train_ids, options.output_dir, 'train', batch_size=options.batch_size)
+    save_document_representations(model, train_X, train_labels, train_F, train_prior_covars, train_topic_covars, train_ids, options.output_dir, 'train', batch_size=options.batch_size)
 
     if dev_X is not None:
-        save_document_representations(model, dev_X, dev_labels, dev_prior_covars, dev_topic_covars, dev_ids, options.output_dir, 'dev', batch_size=options.batch_size)
+        save_document_representations(model, dev_X, dev_labels, dev_F, dev_prior_covars, dev_topic_covars, dev_ids, options.output_dir, 'dev', batch_size=options.batch_size)
 
     if n_test > 0:
-        save_document_representations(model, test_X, test_labels, test_prior_covars, test_topic_covars, test_ids, options.output_dir, 'test', batch_size=options.batch_size)
+        save_document_representations(model, test_X, test_labels, test_F, test_prior_covars, test_topic_covars, test_ids, options.output_dir, 'test', batch_size=options.batch_size)
 
 
 def load_word_counts(input_dir, input_prefix, vocab=None):
@@ -214,6 +226,30 @@ def load_word_counts(input_dir, input_prefix, vocab=None):
     return X, vocab, row_selector, ids
 
 
+def load_frame_counts(input_dir, input_prefix, vocab=None):
+    print("Loading frame data")
+    # laod the word counts and convert to a dense matrix
+    temp = fh.load_sparse(os.path.join(input_dir, input_prefix + '.frames.npz')).todense()
+    F = np.array(temp, dtype='float32')
+    # load the vocabulary
+    if vocab is None:
+        vocab = fh.read_json(os.path.join(input_dir, input_prefix + '.framevocab.json'))
+    n_items, vocab_size = F.shape
+    assert vocab_size == len(vocab)
+    print("Loaded %d documents with %d frames" % (n_items, vocab_size))
+
+    # ids = fh.read_json(os.path.join(input_dir, input_prefix + '.ids.json'))
+
+    # # filter out empty documents and return a boolean selector for filtering labels and covariates
+    # row_selector = np.array(F.sum(axis=1) > 0, dtype=bool)
+    # print("Found %d non-empty documents" % np.sum(row_selector))
+    # F = F[row_selector, :]
+    # ids = [doc_id for i, doc_id in enumerate(ids) if row_selector[i]]
+
+    # return F, vocab, row_selector, ids
+    return F, vocab
+
+
 def load_labels(input_dir, input_prefix, row_selector, options):
     labels = None
     label_type = None
@@ -232,13 +268,12 @@ def load_labels(input_dir, input_prefix, row_selector, options):
             n, n_labels = labels.shape
             print("Found %d labels" % n_labels)
         else:
-            raise(FileNotFoundError("Label file {:s} not found".format(label_file)))
+            raise (FileNotFoundError("Label file {:s} not found".format(label_file)))
 
     return labels, label_type, label_names, n_labels
 
 
 def load_covariates(input_dir, input_prefix, row_selector, covars_to_load, min_count=None, covariate_selector=None):
-
     covariates = None
     covariate_names = None
     n_covariates = 0
@@ -259,7 +294,7 @@ def load_covariates(input_dir, input_prefix, row_selector, covars_to_load, min_c
                 covariate_list.append(covariates)
                 covariate_names_list.extend(covariate_names)
             else:
-                raise(FileNotFoundError("Covariates file {:s} not found".format(covariates_file)))
+                raise (FileNotFoundError("Covariates file {:s} not found".format(covariates_file)))
 
         # combine the separate covariates into a single matrix
         covariates = np.hstack(covariate_list)
@@ -275,7 +310,7 @@ def load_covariates(input_dir, input_prefix, row_selector, covars_to_load, min_c
         # otherwise, choose which columns to drop based on how common they are (for binary covariates)
         elif min_count is not None and int(min_count) > 0:
             print("Removing rare covariates")
-            covar_sums = covariates.sum(axis=0).reshape((n_covariates, ))
+            covar_sums = covariates.sum(axis=0).reshape((n_covariates,))
             covariate_selector = covar_sums > int(min_count)
             covariates = covariates[:, covariate_selector]
             covariate_names = [name for i, name in enumerate(covariate_names) if covariate_selector[i]]
@@ -291,7 +326,7 @@ def train_dev_split(options, rng):
         indices = np.array(range(options.n_train), dtype=int)
         rng.shuffle(indices)
         if options.dev_fold < options.dev_folds - 1:
-            dev_indices = indices[n_dev * options.dev_fold: n_dev * (options.dev_fold +1)]
+            dev_indices = indices[n_dev * options.dev_fold: n_dev * (options.dev_fold + 1)]
         else:
             dev_indices = indices[n_dev * options.dev_fold:]
         train_indices = list(set(indices) - set(dev_indices))
@@ -312,8 +347,8 @@ def split_matrix(train_X, train_indices, dev_indices):
 
 
 def get_init_bg(data):
-    #Compute the log background frequency of all words
-    sums = np.sum(data, axis=0)+1
+    # Compute the log background frequency of all words
+    sums = np.sum(data, axis=0) + 1
     print("Computing background frequencies")
     print("Min/max word counts in training data: %d %d" % (int(np.min(sums)), int(np.max(sums))))
     bg = np.array(np.log(sums) - np.log(float(np.sum(sums))), dtype=np.float32)
@@ -347,13 +382,43 @@ def load_word_vectors(options, rng, vocab):
     return embeddings, update_embeddings
 
 
-def make_network(options, vocab_size, label_type=None, n_labels=0, n_prior_covars=0, n_topic_covars=0):
+def load_frame_vectors(options, rng, frame_vocab):
+    # load word2vec vectors if given
+    # if options.word2vec_file is not None:
+    #     vocab_size = len(frame_vocab)
+    #     vocab_dict = dict(zip(frame_vocab, range(vocab_size)))
+    #     # randomly initialize word vectors for each term in the vocabualry
+    #     embeddings = np.array(rng.rand(options.emb_dim, vocab_size) * 0.25 - 0.5, dtype=np.float32)
+    #     count = 0
+    #     print("Loading word vectors")
+    #     # load the word2vec vectors
+    #     pretrained = gensim.models.KeyedVectors.load_word2vec_format(options.word2vec_file, binary=True)
+    #
+    #     # replace the randomly initialized vectors with the word2vec ones for any that are available
+    #     for word, index in vocab_dict.items():
+    #         if word in pretrained:
+    #             count += 1
+    #             embeddings[:, index] = pretrained[word]
+    #
+    #     print("Found embeddings for %d words" % count)
+    #     update_embeddings = False
+    # else:
+    #     embeddings = None
+    #     update_embeddings = True
+    embeddings = None
+    update_embeddings = True
+
+    return embeddings, update_embeddings
+
+
+def make_network(options, vocab_size, frame_vocab_size, label_type=None, n_labels=0, n_prior_covars=0, n_topic_covars=0):
     # Assemble the network configuration parameters into a dictionary
     network_architecture = \
         dict(embedding_dim=options.emb_dim,
              frame_embedding_dim=options.frame_emb_dim,
              n_topics=options.n_topics,
              vocab_size=vocab_size,
+             frame_vocab_size=frame_vocab_size,
              label_type=label_type,
              n_labels=n_labels,
              n_prior_covars=n_prior_covars,
@@ -368,10 +433,12 @@ def make_network(options, vocab_size, label_type=None, n_labels=0, n_prior_covar
     return network_architecture
 
 
-def train(model, network_architecture, X, Y, PC, TC, batch_size=200, training_epochs=100, display_step=10, X_dev=None, Y_dev=None, PC_dev=None, TC_dev=None, bn_anneal=True, init_eta_bn_prop=1.0, rng=None, min_weights_sq=1e-7):
+def train(model, network_architecture, X, Y, F, PC, TC, batch_size=200, training_epochs=100, display_step=10, X_dev=None, Y_dev=None, PC_dev=None, TC_dev=None, bn_anneal=True, init_eta_bn_prop=1.0,
+          rng=None, min_weights_sq=1e-7):
     # Train the model
     n_train, vocab_size = X.shape
-    mb_gen = create_minibatch(X, Y, PC, TC, batch_size=batch_size, rng=rng)
+    _, frame_vocab_size = F.shape
+    mb_gen = create_minibatch(X, Y, F, PC, TC, batch_size=batch_size, rng=rng)
     total_batch = int(n_train / batch_size)
     batches = 0
     eta_bn_prop = init_eta_bn_prop  # interpolation between batch norm and no batch norm in final layer of recon
@@ -408,9 +475,12 @@ def train(model, network_architecture, X, Y, PC, TC, batch_size=200, training_ep
         # Loop over all batches
         for i in range(total_batch):
             # get a minibatch
-            batch_xs, batch_ys, batch_pcs, batch_tcs = next(mb_gen)
+            batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs = next(mb_gen)
+            # print("batch_fs", batch_fs.shape)
+            # print("batch_fs[0]", batch_fs[0])
+
             # do one minibatch update
-            cost, recon_y, thetas, nl, kld = model.fit(batch_xs, batch_ys, batch_pcs, batch_tcs, eta_bn_prop=eta_bn_prop, l1_beta=l1_beta, l1_beta_c=l1_beta_c, l1_beta_ci=l1_beta_ci)
+            cost, recon_y, thetas, nl, kld = model.fit(batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs, eta_bn_prop=eta_bn_prop, l1_beta=l1_beta, l1_beta_c=l1_beta_c, l1_beta_ci=l1_beta_ci)
 
             # compute accuracy on minibatch
             if network_architecture['n_labels'] > 0:
@@ -480,7 +550,7 @@ def train(model, network_architecture, X, Y, PC, TC, batch_size=200, training_ep
     return model
 
 
-def create_minibatch(X, Y, PC, TC, batch_size=200, rng=None):
+def create_minibatch(X, Y, F, PC, TC, batch_size=200, rng=None):
     # Yield a random minibatch
     while True:
         # Return random data samples of a size 'minibatch_size' at each iteration
@@ -495,6 +565,11 @@ def create_minibatch(X, Y, PC, TC, batch_size=200, rng=None):
         else:
             Y_mb = None
 
+        if F is not None:
+            F_mb = F[ixs, :].astype('float32')
+        else:
+            F_mb = None
+
         if PC is not None:
             PC_mb = PC[ixs, :].astype('float32')
         else:
@@ -505,10 +580,10 @@ def create_minibatch(X, Y, PC, TC, batch_size=200, rng=None):
         else:
             TC_mb = None
 
-        yield X_mb, Y_mb, PC_mb, TC_mb
+        yield X_mb, Y_mb, F_mb, PC_mb, TC_mb
 
 
-def get_minibatch(X, Y, PC, TC, batch, batch_size=200):
+def get_minibatch(X, Y, FRAMES, PC, TC, batch, batch_size=200):
     # Get a particular non-random segment of the data
     n_items, _ = X.shape
     n_batches = int(np.ceil(n_items / float(batch_size)))
@@ -517,11 +592,18 @@ def get_minibatch(X, Y, PC, TC, batch, batch_size=200):
     else:
         ixs = np.arange(batch * batch_size, n_items)
 
+    # print("TYPES: ", type(X), type(Y), type(FRAMES), type(PC), type(TC), type(batch))
+
     X_mb = X[ixs, :].astype('float32')
     if Y is not None:
         Y_mb = Y[ixs, :].astype('float32')
     else:
         Y_mb = None
+
+    if FRAMES is not None:
+        FRAMES_mb = FRAMES[ixs, :].astype('float32')
+    else:
+        FRAMES_mb = None
 
     if PC is not None:
         PC_mb = PC[ixs, :].astype('float32')
@@ -533,10 +615,10 @@ def get_minibatch(X, Y, PC, TC, batch, batch_size=200):
     else:
         TC_mb = None
 
-    return X_mb, Y_mb, PC_mb, TC_mb
+    return X_mb, Y_mb, FRAMES_mb, PC_mb, TC_mb
 
 
-def predict_label_probs(model, X, PC, TC, batch_size=200, eta_bn_prop=0.0):
+def predict_label_probs(model, X, FRAMES, PC, TC, batch_size=200, eta_bn_prop=0.0):
     # Predict a probability distribution over labels for each instance using the classifier part of the network
 
     n_items, _ = X.shape
@@ -545,8 +627,8 @@ def predict_label_probs(model, X, PC, TC, batch_size=200, eta_bn_prop=0.0):
 
     # make predictions on minibatches and then combine
     for i in range(n_batches):
-        batch_xs, batch_ys, batch_pcs, batch_tcs = get_minibatch(X, None, PC, TC, i, batch_size)
-        Z, pred_probs = model.predict(batch_xs, batch_pcs, batch_tcs, eta_bn_prop=eta_bn_prop)
+        batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs = get_minibatch(X, None, FRAMES, PC, TC, i, batch_size)
+        Z, pred_probs = model.predict(batch_xs, batch_fs, batch_pcs, batch_tcs, eta_bn_prop=eta_bn_prop)
         pred_probs_all.append(pred_probs)
 
     pred_probs = np.vstack(pred_probs_all)
@@ -555,7 +637,6 @@ def predict_label_probs(model, X, PC, TC, batch_size=200, eta_bn_prop=0.0):
 
 
 def print_and_save_weights(options, model, vocab, prior_covar_names=None, topic_covar_names=None):
-
     # print background
     bg = model.get_bg()
     if not options.no_bg:
@@ -658,15 +739,17 @@ def print_top_bg(bg, feature_names, n_top_words=10):
                     for j in bg.argsort()[:-n_top_words - 1:-1]]))
     temp = bg.copy()
     temp.sort()
-    print(np.exp(temp[:-n_top_words-1:-1]))
+    print(np.exp(temp[:-n_top_words - 1:-1]))
 
 
-def evaluate_perplexity(model, X, Y, PC, TC, batch_size, eta_bn_prop=0.0):
+def evaluate_perplexity(model, X, Y, FRAMES, PC, TC, batch_size, eta_bn_prop=0.0):
     # Evaluate the approximate perplexity on a subset of the data (using words, labels, and covariates)
     doc_sums = np.array(X.sum(axis=1), dtype=float)
     X = X.astype('float32')
     if Y is not None:
         Y = Y.astype('float32')
+    if FRAMES is not None:
+        FRAMES = FRAMES.astype('float32')
     if PC is not None:
         PC = PC.astype('float32')
     if TC is not None:
@@ -676,8 +759,8 @@ def evaluate_perplexity(model, X, Y, PC, TC, batch_size, eta_bn_prop=0.0):
     n_items, _ = X.shape
     n_batches = int(np.ceil(n_items / batch_size))
     for i in range(n_batches):
-        batch_xs, batch_ys, batch_pcs, batch_tcs = get_minibatch(X, Y, PC, TC, i, batch_size)
-        batch_losses = model.get_losses(batch_xs, batch_ys, batch_pcs, batch_tcs, eta_bn_prop=eta_bn_prop)
+        batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs = get_minibatch(X, Y, FRAMES, PC, TC, i, batch_size)
+        batch_losses = model.get_losses(batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs, eta_bn_prop=eta_bn_prop)
         losses.append(batch_losses)
     losses = np.hstack(losses)
     perplexity = np.exp(np.mean(losses / doc_sums))
@@ -703,9 +786,9 @@ def save_weights(output_dir, beta, bg, feature_names, sparsity_threshold=1e-5):
     fh.write_list_to_text(lines, topics_file)
 
 
-def predict_labels_and_evaluate(model, X, Y, PC, TC, output_dir=None, subset='train', batch_size=200):
+def predict_labels_and_evaluate(model, X, Y, FRAMES, PC, TC, output_dir=None, subset='train', batch_size=200):
     # Predict labels for all instances using the classifier network and evaluate the accuracy
-    pred_probs = predict_label_probs(model, X, PC, TC, batch_size, eta_bn_prop=0.0)
+    pred_probs = predict_label_probs(model, X, FRAMES, PC, TC, batch_size, eta_bn_prop=0.0)
     np.savez(os.path.join(output_dir, 'pred_probs.' + subset + '.npz'), pred_probs=pred_probs)
     predictions = np.argmax(pred_probs, axis=1)
     accuracy = float(np.sum(predictions == np.argmax(Y, axis=1)) / float(len(Y)))
@@ -745,7 +828,7 @@ def print_topic_label_associations(options, label_names, model, n_prior_covars, 
     np.savez(os.path.join(options.output_dir, 'topics_to_labels.npz'), probs=probs, label=label_names)
 
 
-def save_document_representations(model, X, Y, PC, TC, ids, output_dir, partition, batch_size=200):
+def save_document_representations(model, X, Y, FRAMES, PC, TC, ids, output_dir, partition, batch_size=200):
     # compute the mean of the posterior of the latent representation for each documetn and save it
     if Y is not None:
         Y = np.zeros_like(Y)
@@ -755,8 +838,8 @@ def save_document_representations(model, X, Y, PC, TC, ids, output_dir, partitio
     thetas = []
 
     for i in range(n_batches):
-        batch_xs, batch_ys, batch_pcs, batch_tcs = get_minibatch(X, Y, PC, TC, i, batch_size)
-        thetas.append(model.compute_theta(batch_xs, batch_ys, batch_pcs, batch_tcs))
+        batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs = get_minibatch(X, Y, FRAMES, PC, TC, i, batch_size)
+        thetas.append(model.compute_theta(batch_xs, batch_ys, batch_fs, batch_pcs, batch_tcs))
     theta = np.vstack(thetas)
 
     np.savez(os.path.join(output_dir, 'theta.' + partition + '.npz'), theta=theta, ids=ids)
@@ -764,4 +847,3 @@ def save_document_representations(model, X, Y, PC, TC, ids, output_dir, partitio
 
 if __name__ == '__main__':
     main(sys.argv[1:])
-
