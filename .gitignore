@@ -107,3 +107,5 @@ output
 # IntelliJ
 *.iml
 .idea
+
+outputs/
