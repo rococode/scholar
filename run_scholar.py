@@ -85,7 +85,8 @@ def main(args):
         seed = None
 
     # load the training data
-    train_X, vocab, row_selector, train_ids = load_word_counts(input_dir, options.train_prefix)
+#    train_X, vocab, row_selector, train_ids = load_word_counts(input_dir, options.train_prefix)
+    train_X, vocab, row_selector, train_ids = load_word_sequence(input_dir, options.train_prefix)
     train_labels, label_type, label_names, n_labels = load_labels(input_dir, options.train_prefix, row_selector, options)
     train_prior_covars, prior_covar_selector, prior_covar_names, n_prior_covars = load_covariates(input_dir, options.train_prefix, row_selector, options.prior_covars, options.min_prior_covar_count)
     train_topic_covars, topic_covar_selector, topic_covar_names, n_topic_covars = load_covariates(input_dir, options.train_prefix, row_selector, options.topic_covars, options.min_topic_covar_count)
@@ -112,7 +113,8 @@ def main(args):
 
     # load the test data
     if options.test_prefix is not None:
-        test_X, _, row_selector, test_ids = load_word_counts(input_dir, options.test_prefix, vocab=vocab)
+#        test_X, _, row_selector, test_ids = load_word_counts(input_dir, options.test_prefix, vocab=vocab)
+        test_X, _, row_selector, test_ids = load_word_sequence(input_dir, options.test_prefix, vocab=vocab)
         test_labels, _, _, _ = load_labels(input_dir, options.test_prefix, row_selector, options)
         test_prior_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.prior_covars, covariate_selector=prior_covar_selector)
         test_topic_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.topic_covars, covariate_selector=topic_covar_selector)
@@ -189,6 +191,28 @@ def main(args):
     if n_test > 0:
         save_document_representations(model, test_X, test_labels, test_prior_covars, test_topic_covars, test_ids, options.output_dir, 'test', batch_size=options.batch_size)
 
+
+def load_word_sequence(input_dir, input_prefix, vocab=None):
+    print("Loading data")
+    # laod the word counts and convert to a dense matrix
+    temp = fh.load_sparse(os.path.join(input_dir, input_prefix + '.seq.npz')).todense()
+    X = np.array(temp, dtype='float32')
+    # load the vocabulary
+    if vocab is None:
+        vocab = fh.read_json(os.path.join(input_dir, input_prefix + '.vocab.json'))
+    n_items, vocab_size = X.shape
+    assert vocab_size == len(vocab)
+    print("Loaded %d documents with %d features" % (n_items, vocab_size))
+
+    ids = fh.read_json(os.path.join(input_dir, input_prefix + '.ids.json'))
+
+    # filter out empty documents and return a boolean selector for filtering labels and covariates
+    row_selector = np.array(X.sum(axis=1) > 0, dtype=bool)
+    print("Found %d non-empty documents" % np.sum(row_selector))
+    X = X[row_selector, :]
+    ids = [doc_id for i, doc_id in enumerate(ids) if row_selector[i]]
+
+    return X, vocab, row_selector, ids
 
 def load_word_counts(input_dir, input_prefix, vocab=None):
     print("Loading data")
