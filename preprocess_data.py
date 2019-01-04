@@ -9,8 +9,11 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.io import savemat
+import nltk
 
 import file_handling as fh
+
+nltk.download('punkt')
 
 """
 Convert a dataset into the required format (as well as formats required by other tools).
@@ -327,10 +330,12 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
 
 def tokenize(text, strip_html=False, lower=True, keep_emails=False, keep_at_mentions=False, keep_numbers=False, keep_alphanum=False, min_length=3, stopwords=None, vocab=None):
     text = clean_text(text, strip_html, lower, keep_emails, keep_at_mentions)
+    print("cleaned, ", text)
     tokens = text.split()
 
     if stopwords is not None:
         tokens = ['_' if t in stopwords else t for t in tokens]
+        print("stopped", tokens)
 
     # remove tokens that contain numbers
     if not keep_alphanum and not keep_numbers:

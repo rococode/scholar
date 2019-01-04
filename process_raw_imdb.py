@@ -5,9 +5,11 @@ since it's closer to the directory that the imdb set is downloaded into.
 """
 
 import os
+import json
 
 import nltk
 from tqdm import tqdm
+import file_handling as fh
 
 nltk.download('punkt')
 
@@ -32,17 +34,22 @@ def tokenize_and_save(file_path, name, file_dest, type, sentiment):
     with open(file_path, "r") as f:
         lines = f.readlines()
     sentences = []
+    print(lines)
+    stopword_list = fh.read_text(os.path.join('stopwords', 'snowball_stopwords.txt'))
+    stopword_set = {s.strip() for s in stopword_list}
+    print(stopword_list)
     for l in lines:
         from preprocess_data import tokenize
-        l = tokenize(l)
-        print(l)
+        for sentence in nltk.sent_tokenize(l):
+            print(sentence)
+            tokens, _counts = tokenize(sentence, stopwords=stopword_set)
+            print(tokens)
+            sentences.append(json.dumps(tokens) + '\n')
         import sys
         sys.exit(0)
         l = l.strip()
         if len(l) == 0:
             continue
-        for sentence in nltk.sent_tokenize(l):
-            sentences.append(sentence + '\n')
     if not os.path.exists(file_dest):
         os.makedirs(file_dest)
     with open(file_dest + os.sep + name, "w") as out:
