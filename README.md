@@ -1,3 +1,7 @@
+# RNN Branch
+
+The primary change in this branch is the swap from bag-of-words to sequences. The SCHOLAR model is changed to use a seq2vec embedding instead of a simple learned linear embedding.
+
 # Scholar
 
 [Scholar](https://arxiv.org/abs/1705.09296) is a tool for modeling documents with metadata.
