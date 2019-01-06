@@ -23,6 +23,7 @@ Run "python preprocess_data -h" for more options.
 If an 'id' field is provided, this will be used as an identifier in the dataframes, otherwise index will be used 
 """
 
+PAD_TOKEN = '<pad/>'
 # compile some regexes
 punct_chars = list(set(string.punctuation) - set("'"))
 punct_chars.sort()
@@ -64,6 +65,8 @@ def main(args):
                       help='Size of the vocabulary (by most common, following above exclusions): default=%default')
     parser.add_option('--seed', dest='seed', default=42,
                       help='Random integer seed (only relevant for choosing test set): default=%default')
+    parser.add_option('--seq-len', dest='seq_len', default=-1,
+                      help='Length of the sequence representation for each document (zero padded): default=%default')
 
     (options, args) = parser.parse_args(args)
 
@@ -78,6 +81,7 @@ def main(args):
     max_doc_freq = float(options.max_doc_freq)
     vocab_size = options.vocab_size
     stopwords = options.stopwords
+    seq_len = options.seq_len
     if stopwords == 'None':
         stopwords = None
     keep_num = options.keep_num
@@ -92,10 +96,10 @@ def main(args):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower, min_length, label_fields=label_fields)
+    preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower, min_length, seq_len, label_fields=label_fields)
 
 
-def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False, strip_html=False, lower=True, min_length=3, label_fields=None):
+def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False, strip_html=False, lower=True, min_length=3, seq_len=-1, label_fields=None):
 
     if stopwords == 'mallet':
         print("Using Mallet stopwords")
@@ -155,6 +159,7 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
     count = 0
 
     vocab = None
+    longest_seq = 0
     for i, item in enumerate(all_items):
         if i % 1000 == 0 and count > 0:
             print(i)
@@ -168,11 +173,16 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
         else:
             test_parsed.append(tokens)
 
+        longest_seq = max(longest_seq, len(tokens))
+
         # keep track fo the number of documents with each word
         word_counts.update(tokens)
         doc_counts.update(set(tokens))
 
     print("Size of full vocabulary=%d" % len(word_counts))
+    print("Longest sequence in data=%d" % longest_seq)
+    seq_len = longest_seq if seq_len is -1 else seq_len
+    print("Using sequence size %d" % seq_len)
 
     print("Selecting the vocabulary")
     most_common = doc_counts.most_common()
@@ -193,14 +203,17 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
 
     print("Most common words remaining:", ' '.join(vocab[:10]))
     vocab.sort()
+    if PAD_TOKEN in vocab:
+        print(PAD_TOKEN + " token found in vocab...")
+        import sys
+        sys.exit(1)
+    vocab.insert(0, PAD_TOKEN)
 
     fh.write_to_json(vocab, os.path.join(output_dir, train_prefix + '.vocab.json'))
 
-#    train_X_sage, tr_aspect, tr_no_aspect, tr_widx, vocab_for_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix)
-    train_X_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix)
+    train_X_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, output_dir, train_prefix, seq_len)
     if n_test > 0:
-#        test_X_sage, te_aspect, te_no_aspect, _, _= process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix)
-        test_X_sage = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix)
+        test_X_sage = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, output_dir, test_prefix, seq_len)
 
     train_sum = np.array(train_X_sage.sum(axis=0))
     print("%d words missing from training data" % np.sum(train_sum == 0))
@@ -209,20 +222,10 @@ def preprocess_data(train_infile, test_infile, output_dir, train_prefix, test_pr
         test_sum = np.array(test_X_sage.sum(axis=0))
         print("%d words missing from test data" % np.sum(test_sum == 0))
 
-#    sage_output = {'tr_data': train_X_sage, 'tr_aspect': tr_aspect, 'widx': tr_widx, 'vocab': vocab_for_sage}
-#    if n_test > 0:
-#        sage_output['te_data'] = test_X_sage
-#        sage_output['te_aspect'] = te_aspect
-#    savemat(os.path.join(output_dir, 'sage_labeled.mat'), sage_output)
-#    sage_output['tr_aspect'] = tr_no_aspect
-#    if n_test > 0:
-#        sage_output['te_aspect'] = te_no_aspect
-#    savemat(os.path.join(output_dir, 'sage_unlabeled.mat'), sage_output)
-
     print("Done!")
 
 
-def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, output_prefix):
+def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, output_prefix, seq_len):
     n_items = len(items)
     vocab_size = len(vocab)
     vocab_index = dict(zip(vocab, range(vocab_size)))
@@ -253,21 +256,13 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
 
             labels_df = pd.DataFrame(label_matrix, index=ids, columns=label_list_strings)
             labels_df.to_csv(os.path.join(output_dir, output_prefix + '.' + label_field + '.csv'))
-#            label_vector_df = pd.DataFrame(label_vector, index=ids, columns=[label_field])
-#            if n_labels == 2:
-#                label_vector_df.to_csv(os.path.join(output_dir, output_prefix + '.' + label_field + '_vector.csv'))
 
-    X = np.zeros([n_items, vocab_size], dtype=int)
-
-#    dat_strings = []
-#    dat_labels = []
-#    mallet_strings = []
-#    fast_text_lines = []
+    X = np.zeros([n_items, seq_len], dtype=int)
 
     counter = Counter()
     word_counter = Counter()
     doc_lines = []
-    print("Converting to count representations")
+    print("Converting to sequence representations")
     for i, words in enumerate(parsed):
         # get the vocab indices of words that are in the vocabulary
         indices = [vocab_index[word] for word in words if word in vocab_index]
@@ -277,22 +272,21 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
         counter.update(indices)
         word_counter.clear()
         word_counter.update(word_subset)
+        indices += [0] * (seq_len - len(indices))
+        word_subset += [PAD_TOKEN] * (seq_len - len(word_subset))
+
+        print(len(indices))
+        import sys
+        sys.exit(0)
 
         if len(counter.keys()) > 0:
-            # udpate the counts
-#            mallet_strings.append(str(i) + '\t' + 'en' + '\t' + ' '.join(word_subset))
-
-#            dat_string = str(int(len(counter))) + ' '
-#            dat_string += ' '.join([str(k) + ':' + str(int(v)) for k, v in zip(list(counter.keys()), list(counter.values()))])
-#            dat_strings.append(dat_string)
-
-#            # for dat formart, assume just one label is given
-#            if len(label_fields) > 0:
-#                label = items[i][label_fields[-1]]
-#                dat_labels.append(str(label_index[str(label)]))
-
             values = list(counter.values())
             X[np.ones(len(counter.keys()), dtype=int) * i, list(counter.keys())] += values
+
+    print(X)
+    print(X.shape)
+    import sys
+    sys.exit(0)
 
     # convert to a sparse representation
     sparse_X = sparse.csr_matrix(X)
@@ -302,29 +296,9 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, output_dir, 
 
     fh.write_to_json(ids, os.path.join(output_dir, output_prefix + '.ids.json'))
 
-#    # save output for Mallet
-#    fh.write_list_to_text(mallet_strings, os.path.join(output_dir, output_prefix + '.mallet.txt'))
-
-#    # save output for David Blei's LDA/SLDA code
-#    fh.write_list_to_text(dat_strings, os.path.join(output_dir, output_prefix + '.data.dat'))
-#    if len(dat_labels) > 0:
-#        fh.write_list_to_text(dat_labels, os.path.join(output_dir, output_prefix + '.' + label_field + '.dat'))
-
-#    # save output for Jacob Eisenstein's SAGE code:
     sparse_X_sage = sparse.csr_matrix(X, dtype=float)
-#    vocab_for_sage = np.zeros((vocab_size,), dtype=np.object)
-#    vocab_for_sage[:] = vocab
 
-#    # for SAGE, assume only a single label has been given
-#    if len(label_fields) > 0:
-#        # convert array to vector of labels for SAGE
-#        sage_aspect = np.argmax(np.array(labels_df.values, dtype=float), axis=1) + 1
-#    else:
-#        sage_aspect = np.ones([n_items, 1], dtype=float)
-#    sage_no_aspect = np.array([n_items, 1], dtype=float)
-#    widx = np.arange(vocab_size, dtype=float) + 1
-
-    return sparse_X_sage#, sage_aspect, sage_no_aspect, widx, vocab_for_sage
+    return sparse_X_sage
 
 
 def tokenize(text, strip_html=False, lower=True, keep_emails=False, keep_at_mentions=False, keep_numbers=False, keep_alphanum=False, min_length=3, stopwords=None, vocab=None):
