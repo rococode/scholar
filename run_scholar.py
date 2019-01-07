@@ -85,7 +85,7 @@ def main(args):
         seed = None
 
     # load the training data
-    train_X, vocab, row_selector, train_ids = load_word_sequence(input_dir, options.train_prefix)
+    train_X, vocab, row_selector, train_ids = load_word_counts(input_dir, options.train_prefix)
     train_labels, label_type, label_names, n_labels = load_labels(input_dir, options.train_prefix, row_selector, options)
     train_prior_covars, prior_covar_selector, prior_covar_names, n_prior_covars = load_covariates(input_dir, options.train_prefix, row_selector, options.prior_covars, options.min_prior_covar_count)
     train_topic_covars, topic_covar_selector, topic_covar_names, n_topic_covars = load_covariates(input_dir, options.train_prefix, row_selector, options.topic_covars, options.min_topic_covar_count)
@@ -112,7 +112,7 @@ def main(args):
 
     # load the test data
     if options.test_prefix is not None:
-        test_X, _, row_selector, test_ids = load_word_sequence(input_dir, options.test_prefix, vocab=vocab)
+        test_X, _, row_selector, test_ids = load_word_counts(input_dir, options.test_prefix, vocab=vocab)
         test_labels, _, _, _ = load_labels(input_dir, options.test_prefix, row_selector, options)
         test_prior_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.prior_covars, covariate_selector=prior_covar_selector)
         test_topic_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.topic_covars, covariate_selector=topic_covar_selector)
