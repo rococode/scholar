@@ -7,6 +7,7 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from scipy import sparse
 from scipy.io import savemat
 
@@ -96,9 +97,10 @@ def main(args):
     preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower, min_length, label_fields=label_fields)
 
 class Ref:
-    def __init__(self, lines):
+    def __init__(self, lines, name):
         self.words = []
         self.curr_idx = 0
+        self.name = name
         for l in lines:
             self.add_line(l)
 
@@ -108,6 +110,9 @@ class Ref:
             return
         data = line.split('\t')
         tokens, _ = tokenize(data[1])
+        self.words.append(Word(data[1], data[2], data[3], data[4]))
+        import re
+        self.words.append(Word(re.sub('[^a-z]', '', data[1].lower()), data[2], data[3], data[4]))
         for token in tokens:
             w = Word(token, data[2], data[3], data[4])
             self.words.append(w)
@@ -116,13 +121,19 @@ class Ref:
         return [word.frame_type for word in self.words]
 
     def find_frame(self, word):
+        start = self.curr_idx
         while self.curr_idx < len(self.words):
             w = self.words[self.curr_idx]
             self.curr_idx += 1
             if w.match(word):
                 return w.frame_type
         print("Warn: Failed to find frame for word " + word)
+        self.curr_idx = start
         return '_'
+        # return None
+
+    def __str__(self):
+        return "\n".join([str(w) for w in self.words])
 
 class Word:
     def __init__(self, word, frame_word, frame_type, frame_arg):
@@ -136,14 +147,19 @@ class Word:
         w = word.lower()
         if w == me:
             return True
+        if me in w:
+            return True
         return False
+
+    def __str__(self):
+        return self.word + '\t' + self.frame_type
 
 
 def get_reference(directory, ref):
     lines = None
-    with open(directory + os.sep + ref, "r") as f:
+    with open(directory + os.sep + ref, "r", encoding="latin-1") as f:
         lines = f.readlines()
-    r = Ref(lines)
+    r = Ref(lines, directory + os.sep + ref)
     return r
 
 def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False, strip_html=False, lower=True, min_length=3, label_fields=None):
@@ -207,12 +223,19 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
     count = 0
 
     vocab = None
-    for i, item in enumerate(all_items):
+    for i, item in enumerate(tqdm(all_items, desc="parsing")):
         if i % 1000 == 0 and count > 0:
             print(i)
 
         text = item['text']
-        ref = item['ref'] # reference file with frames
+        # ref = item['ref'] # reference file with frames
+        ref = item['orig']
+        ref = ref[ref.rfind(os.sep, 0, ref.rfind(os.sep)) + 1:]
+        ref += '.pred.pred' # artifact from messy code haha
+        if i < n_train:
+            ref = 'imdb-formatted-train' + os.sep + ref
+        else:
+            ref = 'imdb-formatted-test' + os.sep + ref
         tokens, _ = tokenize(text, strip_html=strip_html, lower=lower, keep_numbers=keep_num, keep_alphanum=keep_alphanum, min_length=min_length, stopwords=stopword_set, vocab=vocab)
         reference = get_reference(ref_dir, ref)
 
@@ -227,6 +250,9 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
         # filter vocab by # docs with the word
         doc_counts.update(set(tokens)) 
         frame_counts.update(reference.get_frames())
+
+    fake_frames = [str(x) for x in range(0, 800)]
+    frame_counts.update(fake_frames)
 
     print("Size of full vocabulary=%d" % len(word_counts))
 
@@ -311,16 +337,23 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
     word_counter = Counter()
     doc_lines = []
     print("Converting to count representations")
-    for i, (words, ref) in enumerate(parsed):
+    for i, (words, ref) in enumerate(tqdm(parsed, desc="processing subset")):
         # get the vocab indices of words that are in the vocabulary
 
         # print("w", words, len(words))
         indices = []
         for word in words:
             frame = ref.find_frame(word)
-            fi = frame_index[frame]
-            wi = vocab_index[word]
-            indices.append(wi * frame_size + fi) # "rows" are vocabs, "cols" are frames
+            if frame is None:
+                print(words)
+                print(ref)
+                print(ref.name)
+                import sys
+                sys.exit(1)
+            if word in vocab_index and frame in frame_index:
+                fi = frame_index[frame]
+                wi = vocab_index[word]
+                indices.append(wi * frame_size + fi) # "rows" are vocabs, "cols" are frames
         # indices = [vocab_index[word] for word in words if word in vocab_index]
         # print("i", indices, len(indices))
         word_subset = [word for word in words if word in vocab_index]
