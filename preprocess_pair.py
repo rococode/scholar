@@ -1,15 +1,14 @@
 import os
 import re
-import sys
 import string
-from optparse import OptionParser
+import sys
 from collections import Counter
+from optparse import OptionParser
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from scipy import sparse
-from scipy.io import savemat
+from tqdm import tqdm
 
 import file_handling as fh
 
@@ -32,6 +31,9 @@ replace = re.compile('[%s]' % re.escape(punctuation))
 alpha = re.compile('^[a-zA-Z_]+$')
 alpha_or_num = re.compile('^[a-zA-Z_]+|[0-9_]+$')
 alphanum = re.compile('^[a-zA-Z0-9_]+$')
+
+frame_failed_count = 0
+frame_success_count = 0
 
 
 def main(args):
@@ -69,7 +71,7 @@ def main(args):
     (options, args) = parser.parse_args(args)
 
     train_infile = args[0]
-    ref_dir = args[1] # root directory for 'ref' references in input json
+    ref_dir = args[1]  # root directory for 'ref' references in input json
     output_dir = args[2]
 
     test_infile = options.test
@@ -94,7 +96,9 @@ def main(args):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower, min_length, label_fields=label_fields)
+    preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix, test_prefix, min_doc_count, max_doc_freq, vocab_size, stopwords, keep_num, keep_alphanum, strip_html, lower,
+                    min_length, label_fields=label_fields)
+
 
 class Ref:
     def __init__(self, lines, name):
@@ -126,14 +130,19 @@ class Ref:
             w = self.words[self.curr_idx]
             self.curr_idx += 1
             if w.match(word):
+                global frame_success_count
+                frame_success_count += 1
                 return w.frame_type
-        print("Warn: Failed to find frame for word " + word)
+        # print("Warn: Failed to find frame for word " + word)
+        global frame_failed_count
+        frame_failed_count += 1
         self.curr_idx = start
         return '_'
         # return None
 
     def __str__(self):
         return "\n".join([str(w) for w in self.words])
+
 
 class Word:
     def __init__(self, word, frame_word, frame_type, frame_arg):
@@ -162,8 +171,9 @@ def get_reference(directory, ref):
     r = Ref(lines, directory + os.sep + ref)
     return r
 
-def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False, strip_html=False, lower=True, min_length=3, label_fields=None):
 
+def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix, test_prefix, min_doc_count=0, max_doc_freq=1.0, vocab_size=None, stopwords=None, keep_num=False, keep_alphanum=False,
+                    strip_html=False, lower=True, min_length=3, label_fields=None):
     if stopwords == 'mallet':
         print("Using Mallet stopwords")
         stopword_list = fh.read_text(os.path.join('stopwords', 'mallet_stopwords.txt'))
@@ -189,6 +199,12 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
     else:
         test_items = []
         n_test = 0
+
+    ## DEBUG ONLY
+    # train_items = train_items[0:200]
+    # test_items = test_items[0:200]
+    n_train = len(train_items)
+    n_test = len(test_items)
 
     all_items = train_items + test_items
     n_items = n_train + n_test
@@ -231,11 +247,10 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
         # ref = item['ref'] # reference file with frames
         ref = item['orig']
         ref = ref[ref.rfind(os.sep, 0, ref.rfind(os.sep)) + 1:]
-        ref += '.pred.pred' # artifact from messy code haha
         if i < n_train:
-            ref = 'imdb-formatted-train' + os.sep + ref
+            ref = 'imdb-final-train' + os.sep + ref
         else:
-            ref = 'imdb-formatted-test' + os.sep + ref
+            ref = 'imdb-final-test' + os.sep + ref
         tokens, _ = tokenize(text, strip_html=strip_html, lower=lower, keep_numbers=keep_num, keep_alphanum=keep_alphanum, min_length=min_length, stopwords=stopword_set, vocab=vocab)
         reference = get_reference(ref_dir, ref)
 
@@ -248,11 +263,8 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
         # keep track fo the number of documents with each word
         word_counts.update(tokens)
         # filter vocab by # docs with the word
-        doc_counts.update(set(tokens)) 
+        doc_counts.update(set(tokens))
         frame_counts.update(reference.get_frames())
-
-    fake_frames = [str(x) for x in range(0, 800)]
-    frame_counts.update(fake_frames)
 
     print("Size of full vocabulary=%d" % len(word_counts))
 
@@ -277,13 +289,17 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
     vocab.sort()
 
     print("Size of full frames=%d" % len(frame_counts))
-    frames = [frame for frame in frame_counts]
+    # print(frame_counts)
+
+    most_common = frame_counts.most_common()
+    frame_names, doc_counts = zip(*most_common)
+    frames = [frame for i, frame in enumerate(frame_names)]
+
     print("Most common frames:", ' '.join(frames[:10]))
     frames.sort()
 
-    print("Size of paired params = %d" % (len(vocab) * len(frames)))
-
     fh.write_to_json(vocab, os.path.join(output_dir, train_prefix + '.vocab.json'))
+    fh.write_to_json(frames, os.path.join(output_dir, train_prefix + '.frames.json'))
 
     train_X_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, frames, output_dir, train_prefix)
     if n_test > 0:
@@ -331,17 +347,21 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
             labels_df = pd.DataFrame(label_matrix, index=ids, columns=label_list_strings)
             labels_df.to_csv(os.path.join(output_dir, output_prefix + '.' + label_field + '.csv'))
 
-    X = np.zeros([n_items, vocab_size * frame_size], dtype=int)
+    X = np.zeros([n_items, vocab_size], dtype=int)
+    F = np.zeros([n_items, frame_size], dtype=int)
 
-    counter = Counter()
     word_counter = Counter()
+    frame_counter = Counter()
+    mapper = {}
+    # word_counter = Counter()
     doc_lines = []
     print("Converting to count representations")
     for i, (words, ref) in enumerate(tqdm(parsed, desc="processing subset")):
         # get the vocab indices of words that are in the vocabulary
 
         # print("w", words, len(words))
-        indices = []
+        word_indices = []
+        frame_indices = []
         for word in words:
             frame = ref.find_frame(word)
             if frame is None:
@@ -351,19 +371,25 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
                 import sys
                 sys.exit(1)
             if word in vocab_index and frame in frame_index:
-                fi = frame_index[frame]
                 wi = vocab_index[word]
-                indices.append(wi * frame_size + fi) # "rows" are vocabs, "cols" are frames
+                fi = frame_index[frame]
+                word_indices.append(wi)
+                frame_indices.append(fi)
+                if wi not in mapper:
+                    mapper[wi] = Counter()
+                mapper[wi].update([fi])
         # indices = [vocab_index[word] for word in words if word in vocab_index]
         # print("i", indices, len(indices))
         word_subset = [word for word in words if word in vocab_index]
 
-        counter.clear()
-        counter.update(indices)
         word_counter.clear()
-        word_counter.update(word_subset)
+        word_counter.update(word_indices)
+        frame_counter.clear()
+        frame_counter.update(frame_indices)
+        # word_counter.clear()
+        # word_counter.update(word_subset)
 
-        if len(counter.keys()) > 0:
+        if len(word_counter.keys()) > 0:
             # print(counter)
             # print(counter.keys())
             # print(counter.values())
@@ -371,14 +397,39 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
             # print(vocab_index)
             # print("VALUES\n", values, len(values))
             # 0,0,0... 1,1,1..., 2,2,2..., etc
-            row_indexer = np.ones(len(counter.keys()), dtype=int) * i
-            X[row_indexer, list(counter.keys())] += list(counter.values())
+            row_indexer = np.ones(len(word_counter.keys()), dtype=int) * i
+            X[row_indexer, list(word_counter.keys())] += list(word_counter.values())
+
+            row_indexer = np.ones(len(frame_counter.keys()), dtype=int) * i
+            F[row_indexer, list(frame_counter.keys())] += list(frame_counter.values())
+
+    # print("mapper: " + str(mapper))
+    # for x in mapper.values():
+    #     for y in x:
+    #         if x[y] > 1:
+    #             print(x, frames[y])
+    ct = Counter()
+    ct.update([len(x) for x in mapper.values()])
+    print("word - frame occurrences: " + str(ct))
+
+    global frame_failed_count, frame_success_count
+    print("Found frames in {:s} for {} of {} words ({}% success)"
+          .format(output_prefix,
+                  frame_success_count,
+                  frame_success_count + frame_failed_count,
+                  100.0 * frame_success_count / (frame_success_count + frame_failed_count)))
+    frame_failed_count = 0
+    frame_success_count = 0
 
     # convert to a sparse representation
     sparse_X = sparse.csr_matrix(X)
     fh.save_sparse(sparse_X, os.path.join(output_dir, output_prefix + '.npz'))
 
+    sparse_F = sparse.csr_matrix(F)
+    fh.save_sparse(sparse_F, os.path.join(output_dir, output_prefix + '.frames.npz'))
+
     print("Size of {:s} document-term matrix:".format(output_prefix), sparse_X.shape)
+    print("Size of {:s} document-frame matrix:".format(output_prefix), sparse_F.shape)
 
     fh.write_to_json(ids, os.path.join(output_dir, output_prefix + '.ids.json'))
 
@@ -456,4 +507,3 @@ def clean_text(text, strip_html=False, lower=True, keep_emails=False, keep_at_me
 
 if __name__ == '__main__':
     main(sys.argv[1:])
-
