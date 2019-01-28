@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 import file_handling as fh
+from tqdm import tqdm
 from scholar import Scholar
 
 
@@ -425,7 +426,7 @@ def train(model, network_architecture, X, Y, PC, TC, batch_size=200, training_ep
         avg_nl = 0.
         avg_kld = 0.
         # Loop over all batches
-        for i in range(total_batch):
+        for i in tqdm(range(total_batch), desc="Epoch #{}".format(epoch)):
             # get a minibatch
             batch_xs, batch_ys, batch_pcs, batch_tcs = next(mb_gen)
             # do one minibatch update
