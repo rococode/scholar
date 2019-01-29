@@ -190,29 +190,6 @@ def main(args):
     if n_test > 0:
         save_document_representations(model, test_X, test_labels, test_prior_covars, test_topic_covars, test_ids, options.output_dir, 'test', batch_size=options.batch_size)
 
-
-def load_word_sequence(input_dir, input_prefix, vocab=None):
-    print("Loading data")
-    # laod the word counts and convert to a dense matrix
-    temp = fh.load_sparse(os.path.join(input_dir, input_prefix + '.seq.npz')).todense()
-    X = np.array(temp, dtype='float32')
-    # load the vocabulary
-    if vocab is None:
-        vocab = fh.read_json(os.path.join(input_dir, input_prefix + '.vocab.json'))
-    n_items, vocab_size = X.shape
-    assert vocab_size == len(vocab)
-    print("Loaded %d documents with %d features" % (n_items, vocab_size))
-
-    ids = fh.read_json(os.path.join(input_dir, input_prefix + '.ids.json'))
-
-    # filter out empty documents and return a boolean selector for filtering labels and covariates
-    row_selector = np.array(X.sum(axis=1) > 0, dtype=bool)
-    print("Found %d non-empty documents" % np.sum(row_selector))
-    X = X[row_selector, :]
-    ids = [doc_id for i, doc_id in enumerate(ids) if row_selector[i]]
-
-    return X, vocab, row_selector, ids
-
 def load_word_counts(input_dir, input_prefix, vocab=None):
     print("Loading data")
     # laod the word counts and convert to a dense matrix
