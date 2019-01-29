@@ -86,7 +86,7 @@ def main(args):
         seed = None
 
     # load the training data
-    train_X, vocab, row_selector, train_ids = load_word_counts(input_dir, options.train_prefix)
+    train_X, vocab, row_selector, train_ids, frame_vocab = load_word_counts(input_dir, options.train_prefix)
     train_labels, label_type, label_names, n_labels = load_labels(input_dir, options.train_prefix, row_selector, options)
     train_prior_covars, prior_covar_selector, prior_covar_names, n_prior_covars = load_covariates(input_dir, options.train_prefix, row_selector, options.prior_covars, options.min_prior_covar_count)
     train_topic_covars, topic_covar_selector, topic_covar_names, n_topic_covars = load_covariates(input_dir, options.train_prefix, row_selector, options.topic_covars, options.min_topic_covar_count)
@@ -113,7 +113,7 @@ def main(args):
 
     # load the test data
     if options.test_prefix is not None:
-        test_X, _, row_selector, test_ids = load_word_counts(input_dir, options.test_prefix, vocab=vocab)
+        test_X, _, row_selector, test_ids, __test_frame_vocab = load_word_counts(input_dir, options.test_prefix, vocab=vocab)
         test_labels, _, _, _ = load_labels(input_dir, options.test_prefix, row_selector, options)
         test_prior_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.prior_covars, covariate_selector=prior_covar_selector)
         test_topic_covars, _, _, _ = load_covariates(input_dir, options.test_prefix, row_selector, options.topic_covars, covariate_selector=topic_covar_selector)
@@ -142,7 +142,7 @@ def main(args):
     embeddings, update_embeddings = load_word_vectors(options, rng, vocab)
 
     # create the model
-    model = Scholar(network_architecture, alpha=options.alpha, learning_rate=options.learning_rate, init_embeddings=embeddings, update_embeddings=update_embeddings, init_bg=init_bg, adam_beta1=options.momentum, device=options.device, seed=seed)
+    model = Scholar(network_architecture, alpha=options.alpha, learning_rate=options.learning_rate, init_embeddings=embeddings, update_embeddings=update_embeddings, init_bg=init_bg, adam_beta1=options.momentum, device=options.device, seed=seed, frame_vocab=frame_vocab)
 
     # train the model
     print("Optimizing full model")
@@ -190,6 +190,7 @@ def main(args):
     if n_test > 0:
         save_document_representations(model, test_X, test_labels, test_prior_covars, test_topic_covars, test_ids, options.output_dir, 'test', batch_size=options.batch_size)
 
+
 def load_word_counts(input_dir, input_prefix, vocab=None):
     print("Loading data")
     # laod the word counts and convert to a dense matrix
@@ -198,6 +199,19 @@ def load_word_counts(input_dir, input_prefix, vocab=None):
     # load the vocabulary
     if vocab is None:
         vocab = fh.read_json(os.path.join(input_dir, input_prefix + '.vocab.json'))
+    frame_ratio = fh.read_json(os.path.join(input_dir, input_prefix + '.frameratio.json'))
+    # frame_ratio keys are strings...
+    frame_vocab = {}
+    for x in frame_ratio:
+        # print(type(x), type(int(x)))
+        d = {}
+        for y in frame_ratio[x]:
+            d[int(y)] = frame_ratio[x][y]
+        frame_vocab[int(x)] = d
+        # break
+    # print(frame_vocab)
+    # import sys
+    # sys.exit(0)
     n_items, vocab_size = X.shape
     assert vocab_size == len(vocab)
     print("Loaded %d documents with %d features" % (n_items, vocab_size))
@@ -210,7 +224,7 @@ def load_word_counts(input_dir, input_prefix, vocab=None):
     X = X[row_selector, :]
     ids = [doc_id for i, doc_id in enumerate(ids) if row_selector[i]]
 
-    return X, vocab, row_selector, ids
+    return X, vocab, row_selector, ids, frame_vocab
 
 
 def load_labels(input_dir, input_prefix, row_selector, options):

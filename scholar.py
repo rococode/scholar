@@ -9,7 +9,7 @@ from torch.nn.init import xavier_uniform_
 class Scholar(object):
 
     def __init__(self, config, alpha=1.0, learning_rate=0.001, init_embeddings=None, update_embeddings=True,
-                 init_bg=None, update_background=True, adam_beta1=0.99, adam_beta2=0.999, device=None, seed=None):
+                 init_bg=None, update_background=True, adam_beta1=0.99, adam_beta2=0.999, device=None, seed=None, frame_vocab=None):
 
         """
         Create the model
@@ -54,7 +54,7 @@ class Scholar(object):
             assert len(self.alpha) == self.n_topics
 
         # create the pyTorch model
-        self._model = torchScholar(config, self.alpha, update_embeddings, init_emb=init_embeddings, bg_init=init_bg, device=self.device).to(self.device)
+        self._model = torchScholar(config, self.alpha, update_embeddings, init_emb=init_embeddings, bg_init=init_bg, device=self.device, frame_vocab=frame_vocab).to(self.device)
 
         # set the criterion
         self.criterion = nn.BCEWithLogitsLoss()
@@ -62,6 +62,7 @@ class Scholar(object):
         # create the optimizer
         grad_params = filter(lambda p: p.requires_grad, self._model.parameters())
         self.optimizer = optim.Adam(grad_params, lr=learning_rate, betas=(adam_beta1, adam_beta2))
+        self.frame_vocab = frame_vocab
 
     def fit(self, X, Y, PC, TC, eta_bn_prop=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
@@ -246,7 +247,7 @@ class Scholar(object):
 
 class torchScholar(nn.Module):
 
-    def __init__(self, config, alpha, update_embeddings=True, init_emb=None, bg_init=None, device='cpu'):
+    def __init__(self, config, alpha, update_embeddings=True, init_emb=None, bg_init=None, device='cpu', frame_vocab=None):
         super(torchScholar, self).__init__()
 
         # load the configuration
@@ -264,6 +265,7 @@ class torchScholar(nn.Module):
         self.l2_prior_reg = config['l2_prior_reg']
         self.device = device
         self.classify_from_covars = False
+        self.frame_vocab = frame_vocab
 
         # create a layer for prior covariates to influence the document prior
         if self.n_prior_covars > 0:
@@ -276,8 +278,11 @@ class torchScholar(nn.Module):
 
         # padding_idx=-1 uses array indexing so it's actually indexed at self.vocab_size
         self.embeddings_x_layer = nn.Embedding(self.vocab_size + 1, self.words_emb_dim, padding_idx=-1)
+        # todo: add frame emb dim
+        self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
 
-        emb_size = self.words_emb_dim
+        # TODO: frame_emb_dim
+        emb_size = self.words_emb_dim * 2
         classifier_input_dim = self.n_topics
         if self.n_prior_covars > 0:
             emb_size += self.n_prior_covars
@@ -302,6 +307,8 @@ class torchScholar(nn.Module):
 
         # zero out padding embedding
         self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx] = torch.zeros(self.words_emb_dim)
+        # todo: frame emb dim
+        self.embeddings_f_layer.weight.data[self.embeddings_f_layer.padding_idx] = torch.zeros(self.words_emb_dim)
 
         # print("PADDER", self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx])
 
@@ -383,9 +390,12 @@ class torchScholar(nn.Module):
         # print("X is: ", X.shape, " @@ ", str(X))
         # TODO: this can probably be prettier
         padded_X = []
+        padded_F = []
         longest = -1
+        longest_f = -1
         for doc in X:
             ls = []
+            fls = []
             for i, num in enumerate(doc):
                 # i = index of word
                 # num = num occurrences
@@ -393,14 +403,28 @@ class torchScholar(nn.Module):
                 # print(type(i), type(num), type(num.item()))
                 for _ in range(int(num.item())):
                     ls.append(i)
-                # if i > 3:
-                #     break
+                    if i not in self.frame_vocab:
+                        print("ERROR: idx", i, "is not in frame_vocab!")
+                        print(self.frame_vocab)
+                        import sys
+                        sys.exit(1)
+                    else:
+                        for frame_id in self.frame_vocab[i]:
+                            # todo: weight per frame
+                            fls.append(frame_id)
             longest = max(longest, len(ls))
+            longest_f = max(longest_f, len(fls))
             padded_X.append(ls)
+            padded_F.append(fls)
         # print("longest", longest)
         for doc in padded_X:
             for _ in range(longest - len(doc)):
                 doc.append(self.embeddings_x_layer.padding_idx)
+        # print("longest f", longest_f)
+        for doc in padded_F:
+            for _ in range(longest_f - len(doc)):
+                doc.append(self.embeddings_f_layer.padding_idx)
+
         # print("newx len", len(padded_X))
         # print("newx[0] len", len(padded_X[0]))
         # print("newx[0] ", padded_X[0])
@@ -414,7 +438,11 @@ class torchScholar(nn.Module):
         en0_x = en0_x.sum(dim=1)
         # print("en0_x summed", en0_x.shape, en0_x)
 
-        encoder_parts = [en0_x]
+        en0_f = self.embeddings_f_layer(torch.LongTensor(padded_F))
+        en0_f = en0_f.sum(dim=1)
+        # print("en0_f summed", en0_f.shape, en0_f)
+
+        encoder_parts = [en0_x, en0_f]
 
         # append additional components to the encoder, if given
         if self.n_prior_covars > 0:
@@ -428,9 +456,11 @@ class torchScholar(nn.Module):
             en0 = torch.cat(encoder_parts, dim=1).to(self.device)
         else:
             en0 = en0_x
+        # print("en0", en0.shape)
 
         encoder_output = F.softplus(en0)
         encoder_output_do = self.encoder_dropout_layer(encoder_output)
+        # print("encoder_output_do", encoder_output_do.shape)
 
         # compute the mean and variance of the document posteriors
         posterior_mean = self.mean_layer(encoder_output_do)
