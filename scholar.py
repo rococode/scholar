@@ -385,6 +385,7 @@ class torchScholar(nn.Module):
         :param l1_beta_ci: np.array of prior variances on topic-covariate interactions
         :return: document representation; reconstruction; label probs; (loss, if requested)
         """
+        import time
 
         # embed the word counts
         # print("X is: ", X.shape, " @@ ", str(X))
@@ -393,15 +394,16 @@ class torchScholar(nn.Module):
         padded_F = []
         longest = -1
         longest_f = -1
-        for doc in X:
+        loop_start = time.time()
+        for doc in X: # 200 docs
             ls = []
             fls = []
-            for i, num in enumerate(doc):
+            for i, num in enumerate(doc): # 5000 indices in BoW
                 # i = index of word
                 # num = num occurrences
                 # print(i, num)
                 # print(type(i), type(num), type(num.item()))
-                for _ in range(int(num.item())):
+                for _ in range(int(num.item())): # 1-7 appends
                     ls.append(i)
                     if i not in self.frame_vocab:
                         print("ERROR: idx", i, "is not in frame_vocab!")
@@ -417,6 +419,8 @@ class torchScholar(nn.Module):
             padded_X.append(ls)
             padded_F.append(fls)
         # print("longest", longest)
+        print("full loop ", time.time() - loop_start)
+        start = time.time()
         for doc in padded_X:
             for _ in range(longest - len(doc)):
                 doc.append(self.embeddings_x_layer.padding_idx)
@@ -424,22 +428,31 @@ class torchScholar(nn.Module):
         for doc in padded_F:
             for _ in range(longest_f - len(doc)):
                 doc.append(self.embeddings_f_layer.padding_idx)
+        print("padding", time.time() - start)
 
         # print("newx len", len(padded_X))
         # print("newx[0] len", len(padded_X[0]))
         # print("newx[0] ", padded_X[0])
         # print("newx[1] len", len(padded_X[1]))
         # print("newx[1] ", padded_X[1])
+        start = time.time()
         en0_x = self.embeddings_x_layer(torch.LongTensor(padded_X))
-
+        print("en0_x embed", time.time() - start)
         # print("en0_x", en0_x.shape, en0_x)
 
         # dim 0 = batch, dim 1 = padded length, dim 2 = word_emb_dim
+        start = time.time()
         en0_x = en0_x.sum(dim=1)
+        print("en0_x sum", time.time() - start)
         # print("en0_x summed", en0_x.shape, en0_x)
 
+        start = time.time()
         en0_f = self.embeddings_f_layer(torch.LongTensor(padded_F))
+        print("en0_f embed", time.time() - start)
+        start = time.time()
         en0_f = en0_f.sum(dim=1)
+        print("en0_f sum", time.time() - start)
+
         # print("en0_f summed", en0_f.shape, en0_f)
 
         encoder_parts = [en0_x, en0_f]
