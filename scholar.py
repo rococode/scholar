@@ -283,10 +283,10 @@ class torchScholar(nn.Module):
             self.prior_covar_weights = None
 
         # create the encoder
-        self.embeddings_x_layer = nn.Linear(self.vocab_size, self.words_emb_dim, bias=False)
+        # self.embeddings_x_layer = nn.Linear(self.vocab_size, self.words_emb_dim, bias=False)
 
         # padding_idx=-1 uses array indexing so it's actually indexed at self.vocab_size
-        # self.embeddings_x_layer = nn.Embedding(self.vocab_size + 1, self.words_emb_dim, padding_idx=-1)
+        self.embeddings_x_layer = nn.Embedding(self.vocab_size + 1, self.words_emb_dim, padding_idx=-1)
         # todo: add frame emb dim
         # self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
 
@@ -316,7 +316,7 @@ class torchScholar(nn.Module):
         # print("PADDER", self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx])
 
         # zero out padding embedding
-        # self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx] = torch.zeros(self.words_emb_dim)
+        self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx] = torch.zeros(self.words_emb_dim)
         # todo: frame emb dim
         # self.embeddings_f_layer.weight.data[self.embeddings_f_layer.padding_idx] = torch.zeros(self.words_emb_dim)
 
@@ -398,7 +398,7 @@ class torchScholar(nn.Module):
         import time
 
         ### BASELINE
-        en0_x = self.embeddings_x_layer(X)
+        # en0_x = self.embeddings_x_layer(X)
         ### END BASELINE
 
         # embed the word counts
@@ -409,13 +409,13 @@ class torchScholar(nn.Module):
         # TODO: this can probably be prettier
 
         # # start = time.time()
-        # en0_x = self.embeddings_x_layer(Xp)
+        en0_x = self.embeddings_x_layer(Xp)
         # # print("en0_x embed", time.time() - start)
         # # print("en0_x", en0_x.shape, en0_x)
 
         # # dim 0 = batch, dim 1 = padded length, dim 2 = word_emb_dim
         # # start = time.time()
-        # en0_x = en0_x.sum(dim=1)
+        en0_x = en0_x.sum(dim=1)
         # # print("en0_x sum", time.time() - start)
         # # print("en0_x summed", en0_x.shape, en0_x)
 
