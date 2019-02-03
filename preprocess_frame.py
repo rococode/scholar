@@ -203,6 +203,7 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
     ## DEBUG ONLY
     # train_items = train_items[0:200]
     # test_items = test_items[0:200]
+
     n_train = len(train_items)
     n_test = len(test_items)
 
@@ -349,6 +350,8 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
 
     X = np.zeros([n_items, vocab_size], dtype=int)
     F = np.zeros([n_items, frame_size], dtype=int)
+    padded_X = []
+    padded_F = []
 
     word_counter = Counter()
     frame_counter = Counter()
@@ -356,12 +359,16 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
     # word_counter = Counter()
     doc_lines = []
     print("Converting to count representations")
+    longest_seq = -1
+
     for i, (words, ref) in enumerate(tqdm(parsed, desc="processing subset")):
         # get the vocab indices of words that are in the vocabulary
 
         # print("w", words, len(words))
         word_indices = []
         frame_indices = []
+        word_pad = []
+        frame_pad = []
         for word in words:
             frame = ref.find_frame(word)
             if frame is None:
@@ -378,9 +385,23 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
                 if wi not in mapper:
                     mapper[wi] = Counter()
                 mapper[wi].update([fi])
+                word_pad.append(wi)
+                frame_pad.append(fi)
+
+        assert len(word_pad) == len(frame_pad)
+        longest_seq = max(longest_seq, len(word_pad))
+
+        padded_X.append(word_pad)
+        padded_F.append(frame_pad)
+
+        # print("wp: ", len(word_pad), word_pad)
+        # print("fp: ", len(frame_pad), frame_pad)
+        # print("wpv: ", [vocab[word_idx] for word_idx in word_pad])
+        # print("wpf: ", [frames[word_idx] for word_idx in frame_pad])
+
         # indices = [vocab_index[word] for word in words if word in vocab_index]
         # print("i", indices, len(indices))
-        word_subset = [word for word in words if word in vocab_index]
+        # word_subset = [word for word in words if word in vocab_index]
 
         word_counter.clear()
         word_counter.update(word_indices)
@@ -413,6 +434,20 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
 
     fh.write_to_json(mapper, os.path.join(output_dir, output_prefix + '.framemap.json'))
 
+    for seq in padded_X:
+        seq.extend([len(vocab)] * (longest_seq - len(seq)))
+
+    for seq in padded_F:
+        seq.extend([len(vocab)] * (longest_seq - len(seq)))
+
+    for i in range(len(padded_X)):
+        assert len(padded_X[i]) == len(padded_F[i])
+        # print(len(padded_X[i]), len(padded_F[i]))
+
+    print("Longest sequence in {} is {}".format(output_prefix, len(padded_X[0])))
+
+    fh.write_to_json(padded_X, os.path.join(output_dir, output_prefix + '.xpad.json'))
+    fh.write_to_json(padded_F, os.path.join(output_dir, output_prefix + '.fpad.json'))
 
     ratio_mapper = {}
     for x in mapper:

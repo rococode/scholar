@@ -64,10 +64,11 @@ class Scholar(object):
         self.optimizer = optim.Adam(grad_params, lr=learning_rate, betas=(adam_beta1, adam_beta2))
         self.frame_vocab = frame_vocab
 
-    def fit(self, X, Y, PC, TC, eta_bn_prop=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    def fit(self, X, Xp, Fp, Y, PC, TC, eta_bn_prop=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
         Fit the model to a minibatch of data
         :param X: np.array of document word counts [batch size x vocab size]
+        :param Xp: np.array of document word counts [batch size x vocab size]
         :param Y: np.array of labels [batch size x n_labels]
         :param PC: np.array of prior covariates influencing the document-topic prior [batch size x n_prior_covars]
         :param TC: np.array of topic covariates to be associated with topical deviations [batch size x n_topic_covars]
@@ -78,6 +79,8 @@ class Scholar(object):
         """
         # move data to device
         X = torch.Tensor(X).to(self.device)
+        Xp = torch.LongTensor(Xp).to(self.device)
+        Fp = torch.LongTensor(Fp).to(self.device)
         if Y is not None:
             Y = torch.Tensor(Y).to(self.device)
         if PC is not None:
@@ -87,7 +90,7 @@ class Scholar(object):
         self.optimizer.zero_grad()
 
         # do a forward pass
-        thetas, X_recon, Y_probs, losses = self._model(X, Y, PC, TC, eta_bn_prop=eta_bn_prop, l1_beta=l1_beta, l1_beta_c=l1_beta_c, l1_beta_ci=l1_beta_ci)
+        thetas, X_recon, Y_probs, losses = self._model(X, Xp, Fp, Y, PC, TC, eta_bn_prop=eta_bn_prop, l1_beta=l1_beta, l1_beta_c=l1_beta_c, l1_beta_ci=l1_beta_ci)
         loss, nl, kld = losses
         # update model
         loss.backward()
@@ -97,7 +100,7 @@ class Scholar(object):
             Y_probs = Y_probs.to('cpu').detach().numpy()
         return loss.to('cpu').detach().numpy(), Y_probs, thetas.to('cpu').detach().numpy(), nl.to('cpu').detach().numpy(), kld.to('cpu').detach().numpy()
 
-    def predict(self, X, PC, TC, eta_bn_prop=0.0):
+    def predict(self, X, Xp, Fp, PC, TC, eta_bn_prop=0.0):
         """
         Predict labels for a minibatch of data
         """
@@ -105,12 +108,14 @@ class Scholar(object):
         batch_size = self.get_batch_size(X)
         Y = np.zeros((batch_size, self.network_architecture['n_labels'])).astype('float32')
         X = torch.Tensor(X).to(self.device)
+        Xp = torch.LongTensor(Xp).to(self.device)
+        Fp = torch.LongTensor(Fp).to(self.device)
         Y = torch.Tensor(Y).to(self.device)
         if PC is not None:
             PC = torch.Tensor(PC).to(self.device)
         if TC is not None:
             TC = torch.Tensor(TC).to(self.device)
-        theta, _, Y_recon, _ = self._model(X, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
+        theta, _, Y_recon, _ = self._model(X, Xp, Fp, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
         return theta, Y_recon.to('cpu').detach().numpy()
 
     def predict_from_topics(self, theta, PC, TC, eta_bn_prop=0.0):
@@ -125,7 +130,7 @@ class Scholar(object):
         probs = self._model.predict_from_theta(theta, PC, TC)
         return probs.to('cpu').detach().numpy()
 
-    def get_losses(self, X, Y, PC, TC, eta_bn_prop=0.0, n_samples=0):
+    def get_losses(self, X, Xp, Fp, Y, PC, TC, eta_bn_prop=0.0, n_samples=0):
         """
         Compute and return the loss values for all instances in X, Y, PC, and TC averaged over multiple samples
         """
@@ -139,6 +144,8 @@ class Scholar(object):
         if TC is not None and batch_size == 1:
             TC = np.expand_dims(TC, axis=0)
         X = torch.Tensor(X).to(self.device)
+        Xp = torch.LongTensor(Xp).to(self.device)
+        Fp = torch.LongTensor(Fp).to(self.device)
         if Y is not None:
             Y = torch.Tensor(Y).to(self.device)
         if PC is not None:
@@ -146,22 +153,22 @@ class Scholar(object):
         if TC is not None:
             TC = torch.Tensor(TC).to(self.device)
         if n_samples == 0:
-            _, _, _, temp = self._model(X, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
+            _, _, _, temp = self._model(X, Xp, Fp, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
             loss, NL, KLD = temp
             losses = loss.to('cpu').detach().numpy()
         else:
-            _, _, _, temp = self._model(X, Y, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
+            _, _, _, temp = self._model(X, Xp, Fp, Y, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
             loss, NL, KLD = temp
             losses = loss.to('cpu').detach().numpy()
             for s in range(1, n_samples):
-                _, _, _, temp = self._model(X, Y, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
+                _, _, _, temp = self._model(X, Xp, Fp, Y, PC, TC, do_average=False, var_scale=1.0, eta_bn_prop=eta_bn_prop)
                 loss, NL, KLD = temp
                 losses += loss.to('cpu').detach().numpy()
             losses /= float(n_samples)
 
         return losses
 
-    def compute_theta(self, X, Y, PC, TC, eta_bn_prop=0.0):
+    def compute_theta(self, X, Xp, Fp, Y, PC, TC, eta_bn_prop=0.0):
         """
         Return the latent document representation (mean of posterior of theta) for a given batch of X, Y, PC, and TC
         """
@@ -176,13 +183,15 @@ class Scholar(object):
             TC = np.expand_dims(TC, axis=0)
 
         X = torch.Tensor(X).to(self.device)
+        Xp = torch.LongTensor(Xp).to(self.device)
+        Fp = torch.LongTensor(Fp).to(self.device)
         if Y is not None:
             Y = torch.Tensor(Y).to(self.device)
         if PC is not None:
             PC = torch.Tensor(PC).to(self.device)
         if TC is not None:
             TC = torch.Tensor(TC).to(self.device)
-        theta, _, _, _ = self._model(X, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
+        theta, _, _, _ = self._model(X, Xp, Fp, Y, PC, TC, do_average=False, var_scale=0.0, eta_bn_prop=eta_bn_prop)
 
         return theta.to('cpu').detach().numpy()
 
@@ -274,15 +283,16 @@ class torchScholar(nn.Module):
             self.prior_covar_weights = None
 
         # create the encoder
-        # self.embeddings_x_layer = nn.Linear(self.vocab_size, self.words_emb_dim, bias=False)
+        self.embeddings_x_layer = nn.Linear(self.vocab_size, self.words_emb_dim, bias=False)
 
         # padding_idx=-1 uses array indexing so it's actually indexed at self.vocab_size
-        self.embeddings_x_layer = nn.Embedding(self.vocab_size + 1, self.words_emb_dim, padding_idx=-1)
+        # self.embeddings_x_layer = nn.Embedding(self.vocab_size + 1, self.words_emb_dim, padding_idx=-1)
         # todo: add frame emb dim
-        self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
+        # self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
 
         # TODO: frame_emb_dim
-        emb_size = self.words_emb_dim * 2
+        # emb_size = self.words_emb_dim * 2
+        emb_size = self.words_emb_dim
         classifier_input_dim = self.n_topics
         if self.n_prior_covars > 0:
             emb_size += self.n_prior_covars
@@ -306,9 +316,9 @@ class torchScholar(nn.Module):
         # print("PADDER", self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx])
 
         # zero out padding embedding
-        self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx] = torch.zeros(self.words_emb_dim)
+        # self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx] = torch.zeros(self.words_emb_dim)
         # todo: frame emb dim
-        self.embeddings_f_layer.weight.data[self.embeddings_f_layer.padding_idx] = torch.zeros(self.words_emb_dim)
+        # self.embeddings_f_layer.weight.data[self.embeddings_f_layer.padding_idx] = torch.zeros(self.words_emb_dim)
 
         # print("PADDER", self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx])
 
@@ -369,7 +379,7 @@ class torchScholar(nn.Module):
         self.prior_logvar = torch.from_numpy(prior_logvar).to(self.device)
         self.prior_logvar.requires_grad = False
 
-    def forward(self, X, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
+    def forward(self, X, Xp, Fp, Y, PC, TC, compute_loss=True, do_average=True, eta_bn_prop=1.0, var_scale=1.0, l1_beta=None, l1_beta_c=None, l1_beta_ci=None):
         """
         Do a forward pass of the model
         :param X: np.array of word counts [batch_size x vocab_size]
@@ -387,75 +397,44 @@ class torchScholar(nn.Module):
         """
         import time
 
+        ### BASELINE
+        en0_x = self.embeddings_x_layer(X)
+        ### END BASELINE
+
         # embed the word counts
-        # print("X is: ", X.shape, " @@ ", str(X))
+        # print("Xp is: ", Xp.shape, type(Xp))
+        # print("Fp is: ", Fp.shape, type(Fp))
+        # import sys
+        # sys.exit(0)
         # TODO: this can probably be prettier
-        padded_X = []
-        padded_F = []
-        longest = -1
-        longest_f = -1
-        loop_start = time.time()
-        for doc in X: # 200 docs
-            ls = []
-            fls = []
-            for i, num in enumerate(doc): # 5000 indices in BoW
-                # i = index of word
-                # num = num occurrences
-                # print(i, num)
-                # print(type(i), type(num), type(num.item()))
-                for _ in range(int(num.item())): # 1-7 appends
-                    ls.append(i)
-                    if i not in self.frame_vocab:
-                        print("ERROR: idx", i, "is not in frame_vocab!")
-                        print(self.frame_vocab)
-                        import sys
-                        sys.exit(1)
-                    else:
-                        for frame_id in self.frame_vocab[i]:
-                            # todo: weight per frame
-                            fls.append(frame_id)
-            longest = max(longest, len(ls))
-            longest_f = max(longest_f, len(fls))
-            padded_X.append(ls)
-            padded_F.append(fls)
-        # print("longest", longest)
-        print("full loop ", time.time() - loop_start)
-        start = time.time()
-        for doc in padded_X:
-            for _ in range(longest - len(doc)):
-                doc.append(self.embeddings_x_layer.padding_idx)
-        # print("longest f", longest_f)
-        for doc in padded_F:
-            for _ in range(longest_f - len(doc)):
-                doc.append(self.embeddings_f_layer.padding_idx)
-        print("padding", time.time() - start)
 
-        # print("newx len", len(padded_X))
-        # print("newx[0] len", len(padded_X[0]))
-        # print("newx[0] ", padded_X[0])
-        # print("newx[1] len", len(padded_X[1]))
-        # print("newx[1] ", padded_X[1])
-        start = time.time()
-        en0_x = self.embeddings_x_layer(torch.LongTensor(padded_X))
-        print("en0_x embed", time.time() - start)
-        # print("en0_x", en0_x.shape, en0_x)
+        # # start = time.time()
+        # en0_x = self.embeddings_x_layer(Xp)
+        # # print("en0_x embed", time.time() - start)
+        # # print("en0_x", en0_x.shape, en0_x)
 
-        # dim 0 = batch, dim 1 = padded length, dim 2 = word_emb_dim
-        start = time.time()
-        en0_x = en0_x.sum(dim=1)
-        print("en0_x sum", time.time() - start)
-        # print("en0_x summed", en0_x.shape, en0_x)
+        # # dim 0 = batch, dim 1 = padded length, dim 2 = word_emb_dim
+        # # start = time.time()
+        # en0_x = en0_x.sum(dim=1)
+        # # print("en0_x sum", time.time() - start)
+        # # print("en0_x summed", en0_x.shape, en0_x)
 
-        start = time.time()
-        en0_f = self.embeddings_f_layer(torch.LongTensor(padded_F))
-        print("en0_f embed", time.time() - start)
-        start = time.time()
-        en0_f = en0_f.sum(dim=1)
-        print("en0_f sum", time.time() - start)
+        # # start = time.time()
+        # en0_f = self.embeddings_f_layer(Fp)
+        # # print("en0_f embed", time.time() - start)
+        # # start = time.time()
+        # en0_f = en0_f.sum(dim=1)
+        # # print("en0_f sum", time.time() - start)
+
+        # print("en0_x is: ", en0_x.shape)
+        # print("en0_f is: ", en0_f.shape)
+        # import sys
+        # sys.exit(0)
 
         # print("en0_f summed", en0_f.shape, en0_f)
 
-        encoder_parts = [en0_x, en0_f]
+        # encoder_parts = [en0_x, en0_f]
+        encoder_parts = [en0_x]
 
         # append additional components to the encoder, if given
         if self.n_prior_covars > 0:
