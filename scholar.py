@@ -288,11 +288,11 @@ class torchScholar(nn.Module):
         # padding_idx=-1 uses array indexing so it's actually indexed at self.vocab_size
         self.embeddings_x_layer = nn.Embedding(self.vocab_size + 1, self.words_emb_dim, padding_idx=-1)
         # todo: add frame emb dim
-        # self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
+        self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
 
         # TODO: frame_emb_dim
-        # emb_size = self.words_emb_dim * 2
-        emb_size = self.words_emb_dim
+        emb_size = self.words_emb_dim * 2
+        # emb_size = self.words_emb_dim
         classifier_input_dim = self.n_topics
         if self.n_prior_covars > 0:
             emb_size += self.n_prior_covars
@@ -318,7 +318,7 @@ class torchScholar(nn.Module):
         # zero out padding embedding
         self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx] = torch.zeros(self.words_emb_dim)
         # todo: frame emb dim
-        # self.embeddings_f_layer.weight.data[self.embeddings_f_layer.padding_idx] = torch.zeros(self.words_emb_dim)
+        self.embeddings_f_layer.weight.data[self.embeddings_f_layer.padding_idx] = torch.zeros(self.words_emb_dim)
 
         # print("PADDER", self.embeddings_x_layer.weight.data[self.embeddings_x_layer.padding_idx])
 
@@ -415,12 +415,12 @@ class torchScholar(nn.Module):
 
         # # dim 0 = batch, dim 1 = padded length, dim 2 = word_emb_dim
         # # start = time.time()
-        en0_x = en0_x.sum(dim=1)
+        # en0_x = en0_x.sum(dim=1)
         # # print("en0_x sum", time.time() - start)
         # # print("en0_x summed", en0_x.shape, en0_x)
 
         # # start = time.time()
-        # en0_f = self.embeddings_f_layer(Fp)
+        en0_f = self.embeddings_f_layer(Fp)
         # # print("en0_f embed", time.time() - start)
         # # start = time.time()
         # en0_f = en0_f.sum(dim=1)
@@ -428,13 +428,18 @@ class torchScholar(nn.Module):
 
         # print("en0_x is: ", en0_x.shape)
         # print("en0_f is: ", en0_f.shape)
+        en0_xf = torch.cat((en0_x, en0_f), dim=2)
+        # print("en0_xf is: ", en0_xf.shape)
+        en0_xf = en0_xf.sum(dim=1)
+        # print("en0_xf is: ", en0_xf.shape)
         # import sys
         # sys.exit(0)
 
         # print("en0_f summed", en0_f.shape, en0_f)
 
         # encoder_parts = [en0_x, en0_f]
-        encoder_parts = [en0_x]
+        # encoder_parts = [en0_x]
+        encoder_parts = [en0_xf]
 
         # append additional components to the encoder, if given
         if self.n_prior_covars > 0:
