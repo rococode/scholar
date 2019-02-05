@@ -302,9 +302,11 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
     fh.write_to_json(vocab, os.path.join(output_dir, train_prefix + '.vocab.json'))
     fh.write_to_json(frames, os.path.join(output_dir, train_prefix + '.frames.json'))
 
-    train_X_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, frames, output_dir, train_prefix)
+    longest_seq = 1000
+
+    train_X_sage = process_subset(train_items, train_parsed, label_fields, label_lists, vocab, frames, output_dir, train_prefix, longest_seq)
     if n_test > 0:
-        test_X_sage = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, frames, output_dir, test_prefix)
+        test_X_sage = process_subset(test_items, test_parsed, label_fields, label_lists, vocab, frames, output_dir, test_prefix, longest_seq)
 
     train_sum = np.array(train_X_sage.sum(axis=0))
     print("%d word-frame pairs missing from training data" % np.sum(train_sum == 0))
@@ -316,7 +318,7 @@ def preprocess_data(train_infile, ref_dir, test_infile, output_dir, train_prefix
     print("Done!")
 
 
-def process_subset(items, parsed, label_fields, label_lists, vocab, frames, output_dir, output_prefix):
+def process_subset(items, parsed, label_fields, label_lists, vocab, frames, output_dir, output_prefix, longest_seq):
     n_items = len(items)
     vocab_size = len(vocab)
     frame_size = len(frames)
@@ -359,7 +361,7 @@ def process_subset(items, parsed, label_fields, label_lists, vocab, frames, outp
     # word_counter = Counter()
     doc_lines = []
     print("Converting to count representations")
-    longest_seq = -1
+    # longest_seq = -1
 
     for i, (words, ref) in enumerate(tqdm(parsed, desc="processing subset")):
         # get the vocab indices of words that are in the vocabulary

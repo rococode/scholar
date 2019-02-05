@@ -291,8 +291,16 @@ class torchScholar(nn.Module):
         self.embeddings_f_layer = nn.Embedding(len(self.frame_vocab) + 1, self.words_emb_dim, padding_idx=-1)
 
         # TODO: frame_emb_dim
-        emb_size = self.words_emb_dim * 2
         # emb_size = self.words_emb_dim
+        emb_size = self.words_emb_dim * 2
+
+        ## 1000 = max seq len
+        # we DON'T include the label/other stuff as part of this
+        # todo: emb dim
+        self.seq_combine = nn.Linear(1000 * emb_size, self.words_emb_dim)
+
+        emb_size = self.words_emb_dim
+
         classifier_input_dim = self.n_topics
         if self.n_prior_covars > 0:
             emb_size += self.n_prior_covars
@@ -430,7 +438,12 @@ class torchScholar(nn.Module):
         # print("en0_f is: ", en0_f.shape)
         en0_xf = torch.cat((en0_x, en0_f), dim=2)
         # print("en0_xf is: ", en0_xf.shape)
-        en0_xf = en0_xf.sum(dim=1)
+        en0_xf = en0_xf.view((en0_xf.shape[0], en0_xf.shape[1] * en0_xf.shape[2]))
+        en0_xf = self.seq_combine(en0_xf)
+        # print("en0_xf view : ", en0_xf.shape)
+        # print("linear : ", self.seq_combine)
+
+        # en0_xf = en0_xf.sum(dim=1)
         # print("en0_xf is: ", en0_xf.shape)
         # import sys
         # sys.exit(0)

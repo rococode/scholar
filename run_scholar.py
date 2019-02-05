@@ -218,8 +218,15 @@ def load_word_counts(input_dir, input_prefix, vocab=None):
 
     ids = fh.read_json(os.path.join(input_dir, input_prefix + '.ids.json'))
 
-    f_padded = np.array(fh.read_json(os.path.join(input_dir, input_prefix + '.fpad.json')), dtype='int64')
-    x_padded = np.array(fh.read_json(os.path.join(input_dir, input_prefix + '.xpad.json')), dtype='int64')
+    f_padded = fh.read_json(os.path.join(input_dir, input_prefix + '.fpad.json'))
+    x_padded = fh.read_json(os.path.join(input_dir, input_prefix + '.xpad.json'))
+
+    # print(len(f_padded[0]), len(x_padded[0]), f_padded[0][-1], x_padded[0][-1], len(frame_vocab), len(vocab))
+    # import sys
+    # sys.exit(0)
+
+    f_padded = np.array(f_padded, dtype='int64')
+    x_padded = np.array(x_padded, dtype='int64')
 
     # filter out empty documents and return a boolean selector for filtering labels and covariates
     row_selector = np.array(X.sum(axis=1) > 0, dtype=bool)
