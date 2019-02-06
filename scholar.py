@@ -297,7 +297,8 @@ class torchScholar(nn.Module):
         ## 1000 = max seq len
         # we DON'T include the label/other stuff as part of this
         # todo: emb dim
-        self.seq_combine = nn.Linear(1000 * emb_size, self.words_emb_dim)
+        # self.seq_combine = nn.Linear(1000 * emb_size, self.words_emb_dim)
+        self.seq_lstm = nn.LSTM(emb_size, self.words_emb_dim, batch_first=True)
 
         emb_size = self.words_emb_dim
 
@@ -438,9 +439,16 @@ class torchScholar(nn.Module):
         # print("en0_f is: ", en0_f.shape)
         en0_xf = torch.cat((en0_x, en0_f), dim=2)
         # print("en0_xf is: ", en0_xf.shape)
-        en0_xf = en0_xf.view((en0_xf.shape[0], en0_xf.shape[1] * en0_xf.shape[2]))
-        en0_xf = self.seq_combine(en0_xf)
+        # en0_xf = en0_xf.view((en0_xf.shape[0], en0_xf.shape[1] * en0_xf.shape[2]))
+        # en0_xf = self.seq_combine(en0_xf)
+        lstm_out, (lstm_hidden, _lstm_cell) = self.seq_lstm(en0_xf)
+
         # print("en0_xf view : ", en0_xf.shape)
+        # print("out seq_lstm : ", lstm_out.shape)
+        # print("hidden seq_lstm : ", lstm_hidden.shape)
+        # print("cell seq_lstm : ", _lstm_cell.shape)
+        en0_xf = lstm_hidden.squeeze()
+        # print("en0_xf seq_lstm : ", en0_xf.shape)
         # print("linear : ", self.seq_combine)
 
         # en0_xf = en0_xf.sum(dim=1)
